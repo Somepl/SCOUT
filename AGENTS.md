@@ -88,9 +88,14 @@ python -X utf8 review.py
 - 所有分析仅供参考，不构成投资建议
 - 使用公开信息，不涉及内幕交易
 
+## 存档指令
+- 用户要求每次对话结束前（或修改重要代码后）执行 git add -A && git commit -m "描述" && git push origin main
+- GitHub 远程仓库: https://github.com/Somepl/SCOUT.git (main分支)
+- 直接覆盖推送，不新建分支
+
 ## 后续可改进方向
-- 接入北向资金、融资融券等资金面数据
-- Web可视化看板
 - 自动复盘优化算法权重
-- 加入技术面指标辅助判断
+- 更强AI模型（如DeepSeek切换）
+- 接入英文财经新闻源
+- 策略回测系统
 

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}历史简报{% endblock %}
+{% block content %}
+<div class="header">
+    <h1>📄 历史简报</h1>
+    <div class="sub">浏览每日生成的完整报告</div>
+</div>
+
+<div style="display:flex;gap:24px;">
+    <div style="width:260px;flex-shrink:0;">
+        {% if reports %}
+        <ul class="file-list">
+            {% for r in reports %}
+            <li>
+                <a href="/history?file={{ r.filename }}" class="{% if r.filename == current_file %}active{% endif %}">
+                    📅 {{ r.date }}
+                    <span style="font-size:11px;color:#8b949e;display:block;">{{ r.mtime }}</span>
+                </a>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <div style="color:#8b949e;font-size:13px;padding:12px;">暂无历史简报</div>
+        {% endif %}
+    </div>
+    <div style="flex:1;min-width:0;">
+        {% if current_content %}
+        <div class="report-content">{{ current_content }}</div>
+        {% else %}
+        <div class="empty">
+            <div class="icon">📄</div>
+            <p>从左侧选择一份简报查看</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.pyo
+data/scout.db
+data/reports/
+.env
+venv/
+.venv/

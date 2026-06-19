@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}仪表盘{% endblock %}
+{% block content %}
+<div class="header">
+    <h1>📡 仪表盘</h1>
+    <div class="sub">{{ today }} · 最后运行: {{ last_run or "尚无记录" }}</div>
+</div>
+
+<div class="cards cards-4">
+    <div class="card">
+        <div class="label">本周分析</div>
+        <div class="value">{{ stats.total }}</div>
+        <div class="sub">条新闻分析</div>
+    </div>
+    <div class="card">
+        <div class="label">利好</div>
+        <div class="value green">{{ stats.bullish }}</div>
+        <div class="sub">条利好信号</div>
+    </div>
+    <div class="card">
+        <div class="label">利空</div>
+        <div class="value red">{{ stats.bearish }}</div>
+        <div class="sub">条利空信号</div>
+    </div>
+    <div class="card">
+        <div class="label">买入建议</div>
+        <div class="value green">{{ stats.buy }}</div>
+        <div class="sub">条买入建议</div>
+    </div>
+</div>
+
+<div class="cards cards-3">
+    {% if ml %}
+    <div class="card">
+        <div class="label">市场光信号</div>
+        <div class="light-big">{{ ml.light }}</div>
+        <div class="sub">{{ ml.label }} · 评分 {{ ml.score }}</div>
+    </div>
+    {% else %}
+    <div class="card">
+        <div class="label">市场光信号</div>
+        <div class="value" style="font-size:18px;">暂无数据</div>
+        <div class="sub">运行 SCOUT 后显示</div>
+    </div>
+    {% endif %}
+
+    {% if cl %}
+    <div class="card">
+        <div class="label">资金面信号</div>
+        <div class="light-big">{{ cl.light }}</div>
+        <div class="sub">{{ cl.label }} · 评分 {{ cl.score }}</div>
+    </div>
+    {% else %}
+    <div class="card">
+        <div class="label">资金面信号</div>
+        <div class="value" style="font-size:18px;">暂无数据</div>
+        <div class="sub">运行 SCOUT 后显示</div>
+    </div>
+    {% endif %}
+
+    <div class="card" style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;">
+        <div class="label">一键运行</div>
+        <form action="/api/run" method="post" onsubmit="runScout(event)">
+            <button class="btn btn-primary" type="submit">▶ 立即运行 SCOUT</button>
+        </form>
+        <div class="sub" style="margin-top:8px;" id="run-status"></div>
+    </div>
+</div>
+
+<div class="header" style="margin-top:8px;">
+    <h2>📄 最近简报</h2>
+</div>
+
+{% if reports %}
+<table>
+    <thead>
+        <tr><th>日期</th><th>文件</th><th>大小</th><th>生成时间</th><th></th></tr>
+    </thead>
+    <tbody>
+        {% for r in reports[:10] %}
+        <tr>
+            <td>{{ r.date }}</td>
+            <td>{{ r.filename }}</td>
+            <td>{{ r.size }} B</td>
+            <td>{{ r.mtime }}</td>
+            <td><a href="/history?file={{ r.filename }}">查看</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="empty">
+    <div class="icon">📭</div>
+    <p>尚无简报数据，点击上方按钮运行 SCOUT</p>
+</div>
+{% endif %}
+
+<script>
+async function runScout(e) {
+    e.preventDefault();
+    const btn = e.target.querySelector('button');
+    const status = document.getElementById('run-status');
+    btn.disabled = true;
+    status.textContent = '⏳ 正在运行，请稍候...';
+    try {
+        const resp = await fetch('/api/run', { method: 'POST' });
+        const data = await resp.json();
+        status.textContent = data.message;
+    } catch (err) {
+        status.textContent = '❌ 启动失败: ' + err.message;
+    }
+    setTimeout(() => { btn.disabled = false; }, 5000);
+}
+</script>
+{% endblock %}

@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SCOUT 态势感知 - {% block title %}仪表盘{% endblock %}</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif;
+            background: #0d1117; color: #c9d1d9; min-height: 100vh;
+            display: flex;
+        }
+        nav {
+            width: 200px; min-height: 100vh;
+            background: #161b22; border-right: 1px solid #30363d;
+            padding: 24px 0; flex-shrink: 0;
+        }
+        nav .logo {
+            font-size: 20px; font-weight: 700; padding: 0 20px 20px;
+            border-bottom: 1px solid #30363d; margin-bottom: 12px;
+            color: #58a6ff;
+        }
+        nav .logo small { font-size: 11px; font-weight: 400; color: #8b949e; display: block; }
+        nav a {
+            display: block; padding: 10px 20px; color: #8b949e;
+            text-decoration: none; font-size: 14px; transition: 0.2s;
+        }
+        nav a:hover { background: #1c2333; color: #c9d1d9; }
+        nav a.active { background: #1f2937; color: #58a6ff; border-right: 2px solid #58a6ff; }
+        main {
+            flex: 1; padding: 32px 40px; overflow-y: auto;
+            max-width: 1200px;
+        }
+        .header { margin-bottom: 28px; }
+        .header h1 { font-size: 24px; font-weight: 600; color: #f0f6fc; }
+        .header .sub { color: #8b949e; font-size: 13px; margin-top: 4px; }
+
+        .cards { display: grid; gap: 16px; margin-bottom: 28px; }
+        .cards-4 { grid-template-columns: repeat(4, 1fr); }
+        .cards-3 { grid-template-columns: repeat(3, 1fr); }
+        .cards-2 { grid-template-columns: repeat(2, 1fr); }
+        .card {
+            background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+            padding: 20px; transition: 0.2s;
+        }
+        .card:hover { border-color: #58a6ff; }
+        .card .label { font-size: 12px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+        .card .value { font-size: 28px; font-weight: 700; color: #f0f6fc; }
+        .card .value.green { color: #3fb950; }
+        .card .value.red { color: #f85149; }
+        .card .value.yellow { color: #d29922; }
+        .card .sub { font-size: 12px; color: #8b949e; margin-top: 6px; }
+
+        table {
+            width: 100%; border-collapse: collapse; font-size: 14px;
+        }
+        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #21262d; }
+        th { color: #8b949e; font-weight: 600; font-size: 12px; text-transform: uppercase; }
+        tr:hover td { background: #1c2333; }
+
+        .tag {
+            display: inline-block; padding: 2px 8px; border-radius: 12px;
+            font-size: 11px; font-weight: 500;
+        }
+        .tag-bull { background: #0d5320; color: #7ee787; }
+        .tag-bear { background: #7d0f1a; color: #ffa198; }
+        .tag-neu  { background: #1c2333; color: #8b949e; }
+        .tag-buy  { background: #0d5320; color: #7ee787; }
+        .tag-sell { background: #7d0f1a; color: #ffa198; }
+        .tag-wait { background: #1f2937; color: #d29922; }
+        .tag-high { background: #0d5320; color: #7ee787; }
+        .tag-mid  { background: #1f2937; color: #d29922; }
+        .tag-low  { background: #7d0f1a; color: #ffa198; }
+
+        .light-big { font-size: 36px; letter-spacing: 4px; }
+
+        .report-content {
+            background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
+            padding: 24px; white-space: pre-wrap; font-family: "Cascadia Code", "Fira Code", monospace;
+            font-size: 13px; line-height: 1.7; overflow-x: auto;
+        }
+        .report-content .hl-bull { color: #7ee787; }
+        .report-content .hl-bear { color: #ffa198; }
+        .report-content .hl-info { color: #58a6ff; }
+
+        .btn {
+            display: inline-block; padding: 8px 20px; border-radius: 6px;
+            border: 1px solid #30363d; background: #21262d; color: #c9d1d9;
+            font-size: 14px; cursor: pointer; transition: 0.2s; text-decoration: none;
+        }
+        .btn:hover { background: #30363d; border-color: #58a6ff; }
+        .btn-primary { background: #238636; border-color: #238636; color: #fff; }
+        .btn-primary:hover { background: #2ea043; }
+
+        .filter-bar { margin-bottom: 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+        .filter-bar select, .filter-bar input {
+            padding: 6px 12px; border: 1px solid #30363d; border-radius: 6px;
+            background: #0d1117; color: #c9d1d9; font-size: 13px;
+        }
+        .filter-bar select:focus, .filter-bar input:focus { outline: none; border-color: #58a6ff; }
+
+        .signal-box {
+            display: flex; align-items: center; gap: 16px;
+            padding: 20px; border-radius: 8px; border: 1px solid #30363d;
+        }
+        .signal-box .light-col { font-size: 40px; line-height: 1; }
+        .signal-box .info-col { flex: 1; }
+        .signal-box .info-col .title { font-size: 16px; font-weight: 600; color: #f0f6fc; }
+        .signal-box .info-col .desc { font-size: 13px; color: #8b949e; margin-top: 4px; }
+
+        .empty { text-align: center; padding: 60px 20px; color: #8b949e; }
+        .empty .icon { font-size: 48px; margin-bottom: 12px; }
+
+        a { color: #58a6ff; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        .file-list { list-style: none; }
+        .file-list li { padding: 8px 0; border-bottom: 1px solid #21262d; }
+        .file-list li:last-child { border: none; }
+        .file-list a { display: block; padding: 8px 12px; border-radius: 6px; }
+        .file-list a:hover { background: #1c2333; text-decoration: none; }
+        .file-list a.active { background: #1f2937; color: #58a6ff; }
+
+        @media (max-width: 768px) {
+            body { flex-direction: column; }
+            nav { width: 100%; min-height: auto; padding: 12px 0; }
+            nav .logo { padding: 0 16px 12px; }
+            nav a { padding: 8px 16px; font-size: 13px; }
+            main { padding: 20px; }
+            .cards-4, .cards-3, .cards-2 { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
+</head>
+<body>
+    <nav>
+        <div class="logo">
+            SCOUT
+            <small>态势感知系统</small>
+        </div>
+        <a href="/" class="{% if request.path == '/' %}active{% endif %}">仪表盘</a>
+        <a href="/news" class="{% if request.path == '/news' %}active{% endif %}">新闻分析</a>
+        <a href="/stocks" class="{% if request.path == '/stocks' %}active{% endif %}">个股仪表盘</a>
+        <a href="/capital" class="{% if request.path == '/capital' %}active{% endif %}">资金面</a>
+        <a href="/history" class="{% if request.path == '/history' %}active{% endif %}">历史简报</a>
+    </nav>
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

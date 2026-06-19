@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}个股仪表盘{% endblock %}
+{% block content %}
+<div class="header">
+    <h1>📊 个股交易决策仪表盘</h1>
+    <div class="sub">AI 生成的个股技术分析与交易计划</div>
+</div>
+
+{% if stock_sections %}
+    {% for sec in stock_sections %}
+    <div style="margin-bottom:24px;">
+        <div style="font-size:13px;color:#8b949e;margin-bottom:8px;">📅 {{ sec.date }}</div>
+        <div class="report-content">{{ sec.content }}</div>
+    </div>
+    {% endfor %}
+{% else %}
+<div class="empty">
+    <div class="icon">📊</div>
+    <p>暂无个股分析数据，请先运行 SCOUT</p>
+</div>
+{% endif %}
+{% endblock %}

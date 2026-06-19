@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}资金面{% endblock %}
+{% block content %}
+<div class="header">
+    <h1>💰 资金面态势</h1>
+    <div class="sub">北向资金 · 融资融券 · 资金面信号</div>
+</div>
+
+{% if capital_light %}
+<div class="signal-box" style="margin-bottom:24px;">
+    <div class="light-col">{{ capital_light.light }}</div>
+    <div class="info-col">
+        <div class="title">{{ capital_light.label }}</div>
+        <div class="desc">评分: {{ capital_light.score }}/100 · 信号: {{ capital_light.signal }}</div>
+    </div>
+</div>
+{% endif %}
+
+{% if capital_data and capital_data.northbound %}
+<div class="card" style="margin-bottom:20px;">
+    <div class="label">北向资金流向（近5日）</div>
+    <table>
+        <thead>
+            <tr>
+                <th>日期</th>
+                <th>沪股通</th>
+                <th>深股通</th>
+                <th>合计</th>
+                <th>方向</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for day in capital_data.northbound[:5] %}
+            <tr>
+                <td>{{ day.date }}</td>
+                <td class="{% if day.sh_net > 0 %}green{% else %}red{% endif %}">
+                    {{ (day.sh_net / 1e8) | round(2) }}亿
+                </td>
+                <td class="{% if day.sz_net > 0 %}green{% else %}red{% endif %}">
+                    {{ (day.sz_net / 1e8) | round(2) }}亿
+                </td>
+                <td class="{% if day.total_net > 0 %}green{% else %}red{% endif %}">
+                    {{ (day.total_net / 1e8) | round(2) }}亿
+                </td>
+                <td>
+                    {% if day.direction == '净流入' %}
+                    <span class="tag tag-bull">净流入</span>
+                    {% elif day.direction == '净流出' %}
+                    <span class="tag tag-bear">净流出</span>
+                    {% else %}
+                    <span class="tag tag-neu">{{ day.direction }}</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if capital_data and capital_data.margin %}
+<div class="card" style="margin-bottom:20px;">
+    <div class="label">融资融券余额</div>
+    <table>
+        <thead>
+            <tr>
+                <th>日期</th>
+                <th>两市合计</th>
+                <th>沪市</th>
+                <th>深市</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for day in capital_data.margin[:3] %}
+            <tr>
+                <td>{{ day.date }}</td>
+                <td>{{ day.total_yi }}亿</td>
+                <td>{{ day.sh_yi }}亿</td>
+                <td>{{ day.sz_yi }}亿</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if not capital_data %}
+<div class="empty">
+    <div class="icon">💰</div>
+    <p>暂无资金面数据，请先运行 SCOUT</p>
+</div>
+{% endif %}
+{% endblock %}

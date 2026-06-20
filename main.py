@@ -14,6 +14,7 @@ from strategist import build_picks_report, build_wechat_picks, _pick_rank
 from capital import get_capital_summary, calc_capital_light
 from utils import deduplicate, now_str
 from notifier import push_wechat
+from backtest import run_backtest, print_backtest_report
 
 
 def main():
@@ -105,7 +106,20 @@ def main():
     print(f"  简报已保存: {report_file}", flush=True)
     print(flush=True)
 
-    print("【第9步】推送通知...", flush=True)
+    print("【第9步】存储个股分析结果...", flush=True)
+    if stock_results:
+        storage.save_stock_analysis_batch(stock_results)
+        print(f"  已保存 {len(stock_results)} 只个股分析到数据库", flush=True)
+    print(flush=True)
+
+    print("【第10步】策略回测验证...", flush=True)
+    bt_result = run_backtest(days=90, holding_periods=[5, 10, 20], stop_loss=-0.05)
+    bt_result["回测天数"] = 90
+    bt_report = print_backtest_report(bt_result)
+    report_parts.append(bt_report)
+    print(flush=True)
+
+    print("【第11步】推送通知...", flush=True)
     wechat_summary = build_wechat_summary(results, stock_results, capital_data)
     wechat_picks = build_wechat_picks(picks, results)
     push_wechat(
@@ -115,7 +129,7 @@ def main():
     print(flush=True)
 
     print("=" * 58, flush=True)
-    print("   [OK] SCOUT 本次运行完成", flush=True)
+    print("   [SCOUT] 全链路运行完成", flush=True)
     print("=" * 58, flush=True)
     print(flush=True)
 

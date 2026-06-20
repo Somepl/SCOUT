@@ -50,6 +50,7 @@ SCOUT (Signal Capture, Observation, Understanding & Track) 是一个面向 A 股
 - `notifier.py` — 微信推送（ServerChan）
 - `storage.py` — SQLite数据库
 - `review.py` — 预判复盘脚本
+- `backtest.py` — 策略回测引擎（验证历史买入建议的有效性）
 - `utils.py` — 工具函数
 - `app.py` — Flask Web可视化看板
 - `templates/` — HTML模板（base/index/news/stocks/capital/history）

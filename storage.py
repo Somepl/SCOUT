@@ -49,6 +49,22 @@ class ScoutStorage:
                 outcome_detail TEXT,
                 reviewed_at TEXT DEFAULT (datetime('now','localtime'))
             );
+            CREATE TABLE IF NOT EXISTS stock_analysis (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT,
+                name TEXT,
+                price REAL,
+                score INTEGER,
+                signal TEXT,
+                action TEXT,
+                entry_plan TEXT,
+                stop_loss TEXT,
+                take_profit TEXT,
+                suggested_position TEXT,
+                report_date TEXT,
+                analysis_json TEXT,
+                created_time TEXT DEFAULT (datetime('now','localtime'))
+            );
         """)
         conn.commit()
         conn.close()
@@ -140,6 +156,103 @@ class ScoutStorage:
         )
         conn.commit()
         conn.close()
+
+    def save_stock_analysis_batch(self, stock_results):
+        report_date = today_str()
+        saved = 0
+        for r in stock_results:
+            try:
+                conn = sqlite3.connect(self.db_path)
+                c = conn.cursor()
+                m = r["market"]
+                d = r.get("dashboard", {})
+                bp = d.get("battle_plan", {})
+                ep = bp.get("entry_plan", {})
+                tp = bp.get("take_profit", {})
+                pos = bp.get("position", {})
+                c.execute(
+                    """INSERT INTO stock_analysis
+                       (code, name, price, score, signal, action,
+                        entry_plan, stop_loss, take_profit, suggested_position,
+                        report_date, analysis_json)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (m.get("code", ""),
+                     m.get("name", ""),
+                     m.get("price", 0),
+                     m.get("score", 0),
+                     m.get("signal", ""),
+                     bp.get("action", ""),
+                     json.dumps(ep, ensure_ascii=False),
+                     ep.get("stop_loss", ""),
+                     json.dumps(tp, ensure_ascii=False),
+                     pos.get("suggested_position", ""),
+                     report_date,
+                     json.dumps(d, ensure_ascii=False))
+                )
+                conn.commit()
+                saved += 1
+            except Exception as e:
+                print(f"  [个股存储失败] {m.get('code','')} - {e}", flush=True)
+            finally:
+                conn.close()
+        return saved
+
+    def get_buy_signals(self, days=90):
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute(
+            """SELECT a.id, a.report_date, m.title, a.advice, a.confidence,
+                      a.analysis_raw, a.market_sentiment
+               FROM analysis a
+               JOIN messages m ON m.id = a.message_id
+               WHERE a.report_date >= date('now', ?)
+               ORDER BY a.report_date DESC""",
+            (f"-{days} days",)
+        )
+        rows = c.fetchall()
+        conn.close()
+        signals = []
+        for row in rows:
+            aid, report_date, title, advice, confidence, raw_json, sentiment = row
+            if not raw_json:
+                continue
+            try:
+                raw = json.loads(raw_json)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            codes = raw.get("stock_codes", [])
+            if not codes:
+                continue
+            for code in codes:
+                code = code.strip()
+                if not (code.startswith("6") or code.startswith("0") or code.startswith("3")):
+                    continue
+                if len(code) != 6:
+                    continue
+                signals.append({
+                    "analysis_id": aid,
+                    "date": report_date,
+                    "title": title,
+                    "code": code,
+                    "advice": advice,
+                    "confidence": confidence,
+                    "sentiment": sentiment,
+                })
+        return signals
+
+    def get_stock_history(self, days=30):
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute(
+            """SELECT code, name, price, score, signal, action, report_date
+               FROM stock_analysis
+               WHERE report_date >= date('now', ?)
+               ORDER BY report_date DESC, score DESC""",
+            (f"-{days} days",)
+        )
+        rows = c.fetchall()
+        conn.close()
+        return rows
 
     def get_stats(self, days=90):
         conn = sqlite3.connect(self.db_path)

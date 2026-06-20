@@ -56,6 +56,7 @@ def get_northbound_flow(days=10):
             "sz_net": sz_net,
             "total_net": total_net,
             "direction": "净流入" if total_net > 0 else "净流出",
+            "note": "ok",
         })
 
     return result
@@ -67,10 +68,12 @@ def _northbound_fallback(days=10):
         d = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
         if i == 0:
             rows.append({"date": d, "sh_net": 0, "sz_net": 0,
-                        "total_net": 0, "direction": "数据延迟"})
+                        "total_net": 0, "direction": "数据延迟",
+                        "note": "data_failed"})
         else:
             rows.append({"date": d, "sh_net": 0, "sz_net": 0,
-                        "total_net": 0, "direction": "暂无数据"})
+                        "total_net": 0, "direction": "暂无数据",
+                        "note": "data_failed"})
     return rows
 
 
@@ -108,6 +111,7 @@ def get_margin_balance():
             "total_yi": round(total / 1e8, 2),
             "sh_yi": round(sh / 1e8, 2),
             "sz_yi": round(sz / 1e8, 2),
+            "note": "ok",
         })
 
     return result
@@ -116,7 +120,7 @@ def get_margin_balance():
 def _margin_fallback():
     return [
         {"date": today_str(), "total": 0, "sh": 0, "sz": 0,
-         "total_yi": 0, "sh_yi": 0, "sz_yi": 0, "note": "数据获取失败"},
+         "total_yi": 0, "sh_yi": 0, "sz_yi": 0, "note": "data_failed"},
     ]
 
 
@@ -164,15 +168,25 @@ def get_capital_summary():
         print(f"    融资融券余额: {mg[0]['total_yi']}亿", flush=True)
 
     print("  [资金面] 获取沪深港通十大成交...", flush=True)
-    result["top10"] = get_northbound_top10()
+    top10 = get_northbound_top10()
+    for item in top10:
+        item.setdefault("note", "ok")
+    result["top10"] = top10
 
     return result
 
 
+def _has_real_data(items):
+    for item in items:
+        if item.get("note") != "data_failed" and item.get("note") != "暂无数据":
+            return True
+    return False
+
+
 def calc_capital_light(capital_data):
     nb = capital_data.get("northbound", [])
-    if not nb:
-        return {"score": 50, "light": "⚪", "label": "资金面数据不足", "signal": "中性"}
+    if not nb or not _has_real_data(nb):
+        return {"score": 50, "light": "⚪", "label": "资金面数据暂缺", "signal": "中性"}
 
     recent = nb[:3]
     total_net = sum(abs(r["total_net"]) for r in recent if r["total_net"])

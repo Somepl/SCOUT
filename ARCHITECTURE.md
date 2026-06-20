@@ -256,15 +256,20 @@ tracking
 └── reviewed_at     TEXT        -- 复盘时间
 
 stock_analysis
-├── id              INTEGER PRIMARY KEY
-├── stock_code      TEXT        -- 股票代码
-├── stock_name      TEXT        -- 股票名称
-├── report_date     TEXT        -- 报告日期
-├── close_price     REAL        -- 收盘价
-├── tech_score      INTEGER     -- 技术评分(0-100)
-├── signal          TEXT        -- 交易信号
-├── indicators      TEXT        -- 技术指标(JSON)
-└── created_time    TEXT        -- 创建时间
+├── id                INTEGER PRIMARY KEY
+├── code              TEXT        -- 股票代码
+├── name              TEXT        -- 股票名称
+├── price             REAL        -- 价格
+├── score             INTEGER     -- 综合评分(0-100)
+├── signal            TEXT        -- 交易信号
+├── action            TEXT        -- 操作建议(买入/持有/观望等)
+├── entry_plan        TEXT        -- 买入计划(JSON)
+├── stop_loss         TEXT        -- 止损位
+├── take_profit       TEXT        -- 止盈计划(JSON)
+├── suggested_position TEXT       -- 建议仓位
+├── report_date       TEXT        -- 报告日期
+├── analysis_json     TEXT        -- AI仪表盘完整JSON
+└── created_time      TEXT        -- 创建时间
 ```
 
 ### 4.6 review.py — 预判复盘脚本

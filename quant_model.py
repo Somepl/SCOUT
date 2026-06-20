@@ -166,8 +166,10 @@ def _ema(data, period):
     return result
 
 
-def compute_features_vectorized(kline):
-    """为训练准备: 返回每日特征矩阵和对应未来收益"""
+def compute_features_vectorized(kline, stride=5):
+    """为训练准备: 返回每日特征矩阵和对应未来收益。
+    使用 stride 间隔采样减少重叠，避免训练样本间强自相关导致验证指标虚高。
+    """
     if not kline or len(kline) < 30:
         return None, None
 
@@ -181,8 +183,7 @@ def compute_features_vectorized(kline):
 
     rows = []
     targets = []
-    # 从第 30 天开始，往前看 20 天算特征，往后看 5 天算收益
-    for i in range(30, n - 5):
+    for i in range(30, n - 5, stride):
         sub = df[:i + 1]
         feats = compute_features(sub)
         if feats is None:

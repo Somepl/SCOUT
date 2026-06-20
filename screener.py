@@ -66,13 +66,12 @@ SECTOR_STOCKS = {
 
 ALL_SECTOR_KEYS = list(SECTOR_STOCKS.keys())
 
-KEYWORD_MAP = {}
+SECTOR_ALIASES = {}
 for key in ALL_SECTOR_KEYS:
-    for char in range(len(key)):
-        for length in range(2, len(key) - char + 1):
-            sub = key[char:char + length]
-            if len(sub) >= 2:
-                KEYWORD_MAP.setdefault(sub, []).append(key)
+    SECTOR_ALIASES[key] = [key]
+    for word in key.replace(" ", "").split():
+        if len(word) >= 2 and word != key:
+            SECTOR_ALIASES[key].append(word)
 
 SECTOR_CACHE = {}
 
@@ -87,8 +86,8 @@ def match_sectors(free_text):
         if sector.lower() in text_lower:
             matched.add(sector)
             continue
-        for keyword in KEYWORD_MAP.get(sector, []):
-            if keyword.lower() in text_lower:
+        for alias in SECTOR_ALIASES.get(sector, []):
+            if alias.lower() in text_lower:
                 matched.add(sector)
                 break
     return list(matched)

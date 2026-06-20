@@ -231,16 +231,55 @@ def history_view():
                            current_content="")
 
 
+_scout_status = {"status": "idle", "step": "", "message": "", "progress": ""}
+
+def _run_scout_with_status():
+    global _scout_status
+    _scout_status = {"status": "running", "step": "", "message": "", "progress": ""}
+    original_print = __builtins__.print if isinstance(__builtins__, dict) else __builtins__.print
+    def capture_print(*args, **kwargs):
+        msg = " ".join(str(a) for a in args)
+        if "【" in msg:
+            _scout_status["step"] = msg.strip()[:60]
+        _scout_status["message"] = msg.strip()[-200:]
+        if _scout_status["progress"]:
+            parts = _scout_status["progress"].split("\n")
+            parts.append(msg.strip()[-100:])
+            _scout_status["progress"] = "\n".join(parts[-10:])
+        else:
+            _scout_status["progress"] = msg.strip()[-100:]
+        original_print(*args, **kwargs)
+    try:
+        import builtins
+        builtins.print = capture_print
+        from main import main
+        main()
+        _scout_status["status"] = "done"
+    except Exception as e:
+        _scout_status["status"] = "error"
+        _scout_status["message"] = str(e)
+    finally:
+        import builtins
+        builtins.print = original_print
+
+
 @app.route("/api/run", methods=["POST"])
 def api_run_scout():
+    global _scout_status
+    if _scout_status["status"] == "running":
+        return jsonify({"status": "busy", "message": "已有分析任务正在运行"}), 409
     try:
-        from main import main
         import threading
-        thread = threading.Thread(target=main, daemon=True)
+        thread = threading.Thread(target=_run_scout_with_status, daemon=True)
         thread.start()
-        return jsonify({"status": "started", "message": "SCOUT 分析已启动，请稍后刷新查看结果"})
+        return jsonify({"status": "started", "message": "SCOUT 分析已启动"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/status")
+def api_scout_status():
+    return jsonify(_scout_status)
 
 
 @app.route("/api/stats")
@@ -258,4 +297,4 @@ if __name__ == "__main__":
     print(f"  SCOUT Web Dashboard 启动")
     print(f"  访问地址: http://127.0.0.1:5000")
     print(f"  按 Ctrl+C 停止")
-    app.run(debug=True, host="127.0.0.1", port=5000)
+    app.run(debug=True, host="127.0.0.1", port=5000, use_reloader=False)

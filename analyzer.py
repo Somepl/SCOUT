@@ -174,6 +174,20 @@ def _parse_kv_output(text):
 
 def _try_json(text):
     text = text.strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        start = -1
+        end = len(lines)
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("```"):
+                if start == -1:
+                    start = i
+                else:
+                    end = i
+                    break
+        text = "\n".join(lines[start+1:end]).strip()
+    text = text.strip()
     if not (text.startswith("{") and text.endswith("}")):
         return None
     try:
@@ -223,7 +237,7 @@ def analyze_single_news(client, title, source, content, retries=2):
                     )},
                 ],
                 temperature=0.3,
-                max_tokens=400,
+                max_tokens=800,
             )
             text = resp.choices[0].message.content.strip()
             result = _try_json(text)

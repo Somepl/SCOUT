@@ -72,10 +72,10 @@ class ScoutStorage:
     def save_analysis_batch(self, results):
         report_date = today_str()
         saved = 0
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
         for r in results:
             try:
-                conn = sqlite3.connect(self.db_path)
-                c = conn.cursor()
                 news = r["news"]
                 a = r["analysis"]
                 c.execute(
@@ -104,12 +104,11 @@ class ScoutStorage:
                      json.dumps(a, ensure_ascii=False),
                      report_date)
                 )
-                conn.commit()
                 saved += 1
             except Exception as e:
                 print(f"  [存储失败] {news.get('title','')[:30]} - {e}", flush=True)
-            finally:
-                conn.close()
+        conn.commit()
+        conn.close()
         return saved
 
     def get_history(self, days=7):
@@ -160,10 +159,10 @@ class ScoutStorage:
     def save_stock_analysis_batch(self, stock_results):
         report_date = today_str()
         saved = 0
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
         for r in stock_results:
             try:
-                conn = sqlite3.connect(self.db_path)
-                c = conn.cursor()
                 m = r["market"]
                 d = r.get("dashboard", {})
                 bp = d.get("battle_plan", {})
@@ -189,12 +188,11 @@ class ScoutStorage:
                      report_date,
                      json.dumps(d, ensure_ascii=False))
                 )
-                conn.commit()
                 saved += 1
             except Exception as e:
                 print(f"  [个股存储失败] {m.get('code','')} - {e}", flush=True)
-            finally:
-                conn.close()
+        conn.commit()
+        conn.close()
         return saved
 
     def get_buy_signals(self, days=90):
@@ -309,12 +307,15 @@ class ScoutStorage:
                 continue
 
             best_ret = None
+            best_worst = None
             best_code = None
             for code in codes:
-                ret = self._check_stock_performance(code, report_date, check_days)
-                if ret is not None:
-                    if best_ret is None or abs(ret) > abs(best_ret):
+                result = self._check_stock_performance(code, report_date, check_days)
+                if result is not None:
+                    ret, worst = result
+                    if best_ret is None or ret > best_ret:
                         best_ret = ret
+                        best_worst = worst
                         best_code = code
 
             if best_ret is None:
@@ -323,13 +324,15 @@ class ScoutStorage:
 
             if best_ret > profit_threshold:
                 outcome = "正确"
-                detail = f"自动复盘: {best_code} 最高涨幅 {best_ret:+.2f}%"
+                detail = f"自动复盘: {best_code} 涨幅 {best_ret:+.2f}%"
             elif best_ret > -profit_threshold:
                 outcome = "部分正确"
-                detail = f"自动复盘: {best_code} 涨幅 {best_ret:+.2f}%（在阈值±{profit_threshold}%内）"
+                detail = f"自动复盘: {best_code} 涨幅 {best_ret:+.2f}%（阈值±{profit_threshold}%）"
             else:
                 outcome = "错误"
-                detail = f"自动复盘: {best_code} 最大跌幅 {best_ret:+.2f}%"
+                detail = f"自动复盘: {best_code} 跌幅 {best_ret:+.2f}%"
+            if best_worst is not None and best_worst < -profit_threshold:
+                detail += f"（期间最深回撤{best_worst:.2f}%）"
 
             self.save_review(aid, outcome, detail)
             reviewed += 1
@@ -388,7 +391,9 @@ class ScoutStorage:
         return valid
 
     def _check_stock_performance(self, code, report_date, check_days):
-        """检查股票在 report_date 后的 check_days 内表现"""
+        """检查股票在 report_date 后的 check_days 内表现。
+        返回 (best_return, worst_drawdown) — best_return 用于判定正确性。
+        """
         from market import get_kline
         max_needed = max(check_days) + 10
         kline = get_kline(code, count=max_needed + 20)
@@ -405,17 +410,21 @@ class ScoutStorage:
         entry_price = kline[start_idx + 1]["open"]
         if entry_price <= 0:
             return None
+
         best_ret = None
         for cd in check_days:
             idx = min(start_idx + 1 + cd, len(kline) - 1)
             price = kline[idx]["open"]
             ret = (price - entry_price) / entry_price * 100
-            if best_ret is None or abs(ret) > abs(best_ret):
+            if best_ret is None or ret > best_ret:
                 best_ret = ret
-        if best_ret is not None:
-            for i in range(start_idx + 1, min(start_idx + 1 + max(check_days), len(kline))):
-                low = kline[i]["low"]
-                ret = (low - entry_price) / entry_price * 100
-                if best_ret is None or ret < best_ret:
-                    best_ret = ret
-        return best_ret
+
+        worst_low = None
+        end = min(start_idx + 1 + max(check_days), len(kline))
+        for i in range(start_idx + 1, end):
+            low = kline[i]["low"]
+            ret = (low - entry_price) / entry_price * 100
+            if worst_low is None or ret < worst_low:
+                worst_low = ret
+
+        return (best_ret, worst_low)

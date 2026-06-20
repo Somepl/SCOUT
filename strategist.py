@@ -1,4 +1,13 @@
-from reporter import SEP, SUB_SEP
+SEP = "=" * 60
+SUB_SEP = "-" * 60
+
+
+def _normalize_alloc(n):
+    allocs = [0.35, 0.25, 0.20, 0.12, 0.08]
+    while len(allocs) < n:
+        allocs.append(0.05)
+    total = sum(allocs)
+    return [a / total for a in allocs]
 
 
 def _extract_sectors(news_results):
@@ -95,13 +104,7 @@ def _pick_rank(stock_results, news_results):
     return scored
 
 
-CAPITAL_ALLOCATION = [
-    0.35,
-    0.25,
-    0.20,
-    0.12,
-    0.08,
-]
+CAPITAL_ALLOCATION = _normalize_alloc(5)
 
 
 def build_picks_report(picks, news_results):
@@ -133,7 +136,7 @@ def build_picks_report(picks, news_results):
     lines.append("")
 
     for i, p in enumerate(picks):
-        alloc = CAPITAL_ALLOCATION[i] if i < len(CAPITAL_ALLOCATION) else 0.05
+        alloc = CAPITAL_ALLOCATION[i] if i < len(CAPITAL_ALLOCATION) else 0.0
         alloc_pct = f"{alloc * 100:.0f}%"
 
         lines.append(SUB_SEP)
@@ -179,7 +182,7 @@ def build_picks_report(picks, news_results):
         lines.append("")
 
     lines.append(SEP)
-    total_alloc = sum(CAPITAL_ALLOCATION[i] if i < len(CAPITAL_ALLOCATION) else 0.05 for i in range(len(picks)))
+    total_alloc = sum(CAPITAL_ALLOCATION[i] if i < len(CAPITAL_ALLOCATION) else 0.0 for i in range(len(picks)))
     lines.append(f"  建议总仓位: {total_alloc * 100:.0f}%（{len(picks)}只分散）")
     lines.append(f"  剩余资金: {(1 - total_alloc) * 100:.0f}%（留足现金应对风险）")
     lines.append("")
@@ -214,7 +217,7 @@ def build_wechat_picks(picks, news_results):
     lines.append("")
 
     for i, p in enumerate(picks):
-        alloc = CAPITAL_ALLOCATION[i] if i < len(CAPITAL_ALLOCATION) else 0.05
+        alloc = CAPITAL_ALLOCATION[i] if i < len(CAPITAL_ALLOCATION) else 0.0
         sector_tag = f"[{'/'.join(p['source_sectors'][:2])}]" if p.get('source_sectors') else ""
         lines.append(f"{'🟢' if i == 0 else '🟢'}  #{i+1} {p['name']}（{p['code']}）{sector_tag}")
         lines.append(f"  买入区间: {p['ideal_entry']}")

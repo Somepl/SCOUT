@@ -2,9 +2,14 @@
 SCOUT 配置文件
 ==============
 你只需要修改这个文件里的配置项即可。
+重要: 密钥优先从环境变量读取，如未设置则使用下方硬编码值。
+可在 .env 文件或系统环境变量中设置:
+  SCOUT_AI_API_KEY, SCOUT_SERVER_CHAN_KEY
 """
 
-AI_API_KEY = "sk-xsljgmciqbwrtgkrrslmzvmllbkbtjtbwrudwqpnshykniex"
+import os
+
+AI_API_KEY = os.environ.get("SCOUT_AI_API_KEY") or "sk-xsljgmciqbwrtgkrrslmzvmllbkbtjtbwrudwqpnshykniex"
 AI_BASE_URL = "https://api.siliconflow.cn/v1"
 AI_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 
@@ -86,4 +91,4 @@ AUTO_REVIEW_CHECK_DAYS = [5, 10]  # 发出预判后 N 个交易日复查
 AUTO_REVIEW_PROFIT_THRESHOLD = 3.0  # 涨幅超过此值视为"正确"（%）
 
 PUSH_WECHAT = True
-SERVER_CHAN_KEY = "SCT364176THOR5HnLTftAFmEceCMAuGd5j"
+SERVER_CHAN_KEY = os.environ.get("SCOUT_SERVER_CHAN_KEY") or "SCT364176THOR5HnLTftAFmEceCMAuGd5j"

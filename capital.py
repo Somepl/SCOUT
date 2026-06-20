@@ -12,7 +12,7 @@ HEADERS = {
 
 
 def _bypass_proxy():
-    return {"http": "", "https": ""}
+    return {"http": None, "https": None}
 
 
 def _fetch_json(url, params=None):
@@ -120,7 +120,7 @@ def _margin_fallback():
     ]
 
 
-def get_northbound_top10(market="sh"):
+def get_northbound_top10():
     url = "https://push2.eastmoney.com/api/qt/kamt.kline/get"
     params = {
         "fields1": "f1,f2,f3,f4,f5,f6,f7,f8",

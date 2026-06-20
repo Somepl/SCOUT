@@ -409,7 +409,7 @@ scout/
 - 数据库异常：事务回滚，不丢失已有数据
 
 ### 6.5 数据安全
-- API Key 仅存在于 `config.py`，不提交版本管理
+- API Key 优先从环境变量读取（`SCOUT_AI_API_KEY` / `SCOUT_SERVER_CHAN_KEY`），避免硬编码提交
 - 所有数据存储在本地 SQLite，不自动上传
 - AI 分析时上传消息文本到云端（必要的数据传输）
 - 微信推送通过 ServerChan HTTPS 加密传输

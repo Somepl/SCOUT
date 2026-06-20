@@ -11,7 +11,7 @@ HEADERS = {
 
 
 def _bypass_proxy():
-    return {"http": "", "https": ""}
+    return {"http": None, "https": None}
 
 
 def _stock_sina_id(code):
@@ -172,8 +172,6 @@ class StockTrendAnalyzer:
             "rsi_24": rsi_info["rsi_24"],
             "rsi_status": rsi_info["status"],
             "rsi_signal": rsi_info["signal"],
-            "score": score,
-            "signal": signal,
             "signal_reasons": reasons,
             "risk_factors": risks,
         }
@@ -426,7 +424,7 @@ def get_market_phase():
     if h == 12:
         return "lunch_break", "午间休市"
     if h == 13 and m < 30:
-        return "lunch_break", "午间休市" if m < 0 else "盘中"
+        return "lunch_break", "午间休市"
     if h == 14 and m >= 57:
         return "closing_auction", "临近收盘"
     if h >= 15:

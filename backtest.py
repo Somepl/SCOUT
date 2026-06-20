@@ -17,53 +17,6 @@ from storage import ScoutStorage
 from market import get_kline
 
 
-def load_buy_signals(days=90):
-    """读取历史分析记录中含股票代码且建议为买入/关注的信号"""
-    storage = ScoutStorage(DATA_DIR)
-    conn = sqlite3_connect()
-    c = conn.cursor()
-    c.execute(
-        """SELECT a.id, a.report_date, m.title, a.advice, a.confidence,
-                  a.analysis_raw, a.market_sentiment
-           FROM analysis a
-           JOIN messages m ON m.id = a.message_id
-           WHERE a.report_date >= date('now', ?)
-           ORDER BY a.report_date DESC""",
-        (f"-{days} days",)
-    )
-    rows = c.fetchall()
-    conn.close()
-
-    signals = []
-    for row in rows:
-        aid, report_date, title, advice, confidence, raw_json, sentiment = row
-        if not raw_json:
-            continue
-        try:
-            raw = json.loads(raw_json)
-        except (json.JSONDecodeError, TypeError):
-            continue
-        codes = raw.get("stock_codes", [])
-        if not codes:
-            continue
-        for code in codes:
-            code = code.strip()
-            if not (code.startswith("6") or code.startswith("0") or code.startswith("3")):
-                continue
-            if len(code) != 6:
-                continue
-            signals.append({
-                "analysis_id": aid,
-                "date": report_date,
-                "title": title,
-                "code": code,
-                "advice": advice,
-                "confidence": confidence,
-                "sentiment": sentiment,
-            })
-    return signals
-
-
 def sqlite3_connect():
     import sqlite3
     db_path = os.path.join(DATA_DIR, "scout.db")
@@ -127,39 +80,39 @@ def simulate_trade(code, entry_date_str, holding_days=10, stop_loss=-0.05):
 
 
 def run_backtest(days=90, holding_periods=None, stop_loss=-0.05):
-    """主回测入口"""
+    """主回测入口——各持仓周期独立模拟"""
     if holding_periods is None:
         holding_periods = [5, 10, 20, 30]
 
-    signals = load_buy_signals(days=days)
+    storage = ScoutStorage(DATA_DIR)
+    signals = storage.get_buy_signals(days=days)
 
     buy_signals = [s for s in signals if s["advice"] in ("买入", "关注")]
     if not buy_signals:
         return {"总信号数": len(signals), "买入信号": 0, "成交": 0, "结果": {}, "总结": "无买入信号可回测"}
 
-    all_results = []
-    for sig in buy_signals:
-        trade = simulate_trade(sig["code"], sig["date"], holding_days=holding_periods[-1], stop_loss=stop_loss)
-        if trade:
-            trade["advice"] = sig["advice"]
-            trade["confidence"] = sig["confidence"]
-            trade["title"] = sig["title"]
-            trade["date"] = sig["date"]
-            all_results.append(trade)
-
     period_results = {}
+    all_trades_by_period = {}
+
     for hp in holding_periods:
         trades = []
-        for t in all_results:
-            if t["holding_days"] >= hp:
-                adj_ret = t["return_pct"]
-                trades.append({**t, "return_pct_adj": adj_ret})
+        for sig in buy_signals:
+            trade = simulate_trade(sig["code"], sig["date"], holding_days=hp, stop_loss=stop_loss)
+            if trade:
+                trade["advice"] = sig["advice"]
+                trade["confidence"] = sig["confidence"]
+                trade["title"] = sig["title"]
+                trade["date"] = sig["date"]
+                trades.append(trade)
+
+        key = f"{hp}d"
+        all_trades_by_period[key] = trades
 
         if not trades:
-            period_results[f"{hp}d"] = {"交易次数": 0}
+            period_results[key] = {"交易次数": 0}
             continue
 
-        returns = [t["return_pct_adj"] for t in trades]
+        returns = [t["return_pct"] for t in trades]
         wins = [r for r in returns if r > 0]
         losses = [r for r in returns if r < 0]
         win_rate = len(wins) / len(returns) * 100 if returns else 0
@@ -170,7 +123,7 @@ def run_backtest(days=90, holding_periods=None, stop_loss=-0.05):
         max_loss = min(returns) if returns else 0
         max_gain = max(returns) if returns else 0
 
-        period_results[f"{hp}d"] = {
+        period_results[key] = {
             "交易次数": len(trades),
             "胜率": round(win_rate, 1),
             "平均收益率": round(avg_ret, 2),
@@ -194,13 +147,16 @@ def run_backtest(days=90, holding_periods=None, stop_loss=-0.05):
             f"盈亏比{r['盈亏比']}"
         )
 
+    longest_key = max(all_trades_by_period.keys(), key=lambda k: int(k.replace("d", "")))
+    display_trades = all_trades_by_period.get(longest_key, [])
+
     return {
         "总信号数": len(signals),
         "买入信号": len(buy_signals),
-        "成交": len(all_results),
+        "成交": len(display_trades),
         "结果": period_results,
         "总结": "\n".join(summary_parts),
-        "trades": all_results,
+        "trades": display_trades,
     }
 
 

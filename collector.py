@@ -6,13 +6,6 @@ from datetime import datetime
 from utils import now_str
 
 
-try:
-    import ssl
-    _NO_VERIFY_CTX = ssl._create_unverified_context()
-except Exception:
-    _NO_VERIFY_CTX = None
-
-
 def fetch_url(url, timeout=15, retries=2, verify=True):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -21,7 +14,7 @@ def fetch_url(url, timeout=15, retries=2, verify=True):
     for attempt in range(retries):
         try:
             kwargs = {"headers": headers, "timeout": timeout}
-            if not verify and _NO_VERIFY_CTX is not None:
+            if not verify:
                 kwargs["verify"] = False
             import warnings
             with warnings.catch_warnings():
@@ -45,7 +38,7 @@ def _extract_links_generic(html, source_name, domain_filter, min_length=15, max_
     soup = BeautifulSoup(html, "lxml")
     seen = set()
     exclude_keywords = ["导航", "登录", "注册", "搜索", "广告", "视频", "图片", "客户端"]
-    for a in soup.select("a"):
+    for a in soup.select("a[href]"):
         title = a.get_text(strip=True)
         href = a.get("href", "")
         if len(title) < min_length:
@@ -60,7 +53,7 @@ def _extract_links_generic(html, source_name, domain_filter, min_length=15, max_
         if href.startswith("//"):
             href = "https:" + href
         elif href.startswith("/"):
-            href = "https://www." + domain_filter + href
+            href = "https://" + domain_filter + href
         elif not href.startswith("http"):
             continue
         items.append({
@@ -145,26 +138,29 @@ def parse_rss(content):
                 "publish_time": now_str(),
                 "category": "news"
             })
+        return items
     except ET.ParseError:
-        try:
-            root = ET.fromstring(content)
-            for item in root.iter("{http://www.w3.org/2005/Atom}entry"):
-                title_el = item.find("{http://www.w3.org/2005/Atom}title")
-                link_el = item.find("{http://www.w3.org/2005/Atom}link")
-                if title_el is None or title_el.text is None:
-                    continue
-                title = title_el.text.strip()
-                link = link_el.get("href", "") if link_el is not None else ""
-                items.append({
-                    "title": title,
-                    "content": title,
-                    "source": "RSS",
-                    "url": link,
-                    "publish_time": now_str(),
-                    "category": "news"
-                })
-        except Exception:
-            pass
+        pass
+    try:
+        root = ET.fromstring(content)
+        ns = "{http://www.w3.org/2005/Atom}"
+        for entry in root.iter(f"{ns}entry"):
+            title_el = entry.find(f"{ns}title")
+            link_el = entry.find(f"{ns}link")
+            if title_el is None or title_el.text is None:
+                continue
+            title = title_el.text.strip()
+            link = link_el.get("href", "") if link_el is not None else ""
+            items.append({
+                "title": title,
+                "content": title,
+                "source": "RSS",
+                "url": link,
+                "publish_time": now_str(),
+                "category": "news"
+            })
+    except Exception:
+        pass
     return items
 
 

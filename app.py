@@ -9,10 +9,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import DATA_DIR, NEWS_SOURCES, MAX_NEWS, MAX_SCREENED_STOCKS
 from storage import ScoutStorage
-from reporter import calc_market_light, calc_capital_light
+from reporter import calc_market_light
 from capital import get_capital_summary, calc_capital_light as calc_cl
-from collector import collect_all
-from utils import deduplicate, now_str
 
 app = Flask(__name__)
 app.config["DATA_DIR"] = DATA_DIR

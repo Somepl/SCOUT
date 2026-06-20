@@ -134,11 +134,14 @@ def compute_features(kline):
 
     # ── MACD ──
     if n > 26:
-        ema12 = _ema(closes, 12)[-1]
-        ema26 = _ema(closes, 26)[-1]
-        dif = ema12 - ema26
+        ema12_arr = _ema(closes, 12)
+        ema26_arr = _ema(closes, 26)
+        dif_arr = ema12_arr - ema26_arr
+        dif = dif_arr[-1]
+        dea_arr = _ema(dif_arr, 9)
+        dea = dea_arr[-1]
         feats["macd_dif"] = dif
-        feats["macd_hist"] = dif - _ema(np.array([ema12 - ema26]), 9)[-1]
+        feats["macd_hist"] = dif - dea
         feats["macd_positive"] = 1 if dif > 0 else 0
     else:
         feats["macd_dif"] = 0

@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import DATA_DIR
 
 MODEL_PATH = os.path.join(DATA_DIR, "quant_model.pkl")
+LAST_TRAIN_PATH = os.path.join(DATA_DIR, "quant_last_train.txt")
 
 SAFE_DIV = 1e-10
 
@@ -243,30 +244,94 @@ class QuantScorer:
     def is_trained(self):
         return self.model is not None
 
-    def train(self, codes=None, max_codes=50):
-        """在多个股票的历史数据上训练模型"""
+    @staticmethod
+    def get_diverse_stocks(count=50):
+        """从板块映射表中获取多样化的股票列表"""
+        try:
+            from screener import SECTOR_STOCKS
+            seen = set()
+            result = []
+            for sector, codes in SECTOR_STOCKS.items():
+                for code in codes:
+                    if code not in seen:
+                        seen.add(code)
+                        result.append((sector, code))
+            if len(result) < count:
+                return [c for _, c in result]
+            seen_sectors = set()
+            diverse = []
+            for sector, code in result:
+                if sector not in seen_sectors:
+                    seen_sectors.add(sector)
+                    diverse.append(code)
+                if len(diverse) >= count:
+                    break
+            if len(diverse) < count:
+                for _, code in result:
+                    if code not in diverse:
+                        diverse.append(code)
+                    if len(diverse) >= count:
+                        break
+            return diverse[:count]
+        except Exception:
+            return ["600519", "000858", "300750", "601318",
+                    "600036", "000333", "002594", "600887",
+                    "601012", "600438", "002371", "688981",
+                    "000568", "601398", "601628", "600030",
+                    "002460", "002466", "688599", "603501",
+                    "300760", "000002", "601088", "600900",
+                    "002475", "000333", "600941", "601668",
+                    "002352", "600019", "601899", "300059",
+                    "300124", "002230", "601888", "600276"]
+
+    def get_last_train_days_ago(self):
+        """返回距离上次训练的天数，若从未训练返回 None"""
+        if not os.path.isfile(LAST_TRAIN_PATH):
+            return None
+        try:
+            with open(LAST_TRAIN_PATH, "r") as f:
+                dt = datetime.strptime(f.read().strip(), "%Y-%m-%d")
+                return (datetime.now() - dt).days
+        except Exception:
+            return None
+
+    def _write_last_train(self):
+        os.makedirs(os.path.dirname(LAST_TRAIN_PATH), exist_ok=True)
+        with open(LAST_TRAIN_PATH, "w") as f:
+            f.write(datetime.now().strftime("%Y-%m-%d"))
+
+    def train(self, codes=None, max_codes=None):
+        """在多个股票的历史数据上训练模型，使用500天K线数据"""
         if not HAS_LGB:
             print("  [量化模型] LightGBM 未安装，跳过训练", flush=True)
             return False
 
+        from config import TRAIN_MIN_STOCKS
+        if max_codes is None:
+            max_codes = TRAIN_MIN_STOCKS
+
         if not codes:
-            codes = ["600519", "000858", "300750", "601318",
-                     "600036", "000333", "002594", "600887",
-                     "601012", "600438", "002371", "688981"]
+            codes = self.get_diverse_stocks(count=max_codes)
 
         all_features = []
         all_targets = []
 
-        print(f"  [量化模型] 开始训练，加载 {len(codes)} 只股票...", flush=True)
+        print(f"  [量化模型] 开始训练，加载 {len(codes)} 只股票（各250日K线）...", flush=True)
         from market import get_kline as _get_kline
-        for code in codes[:max_codes]:
-            kline = _get_kline(code, count=180)
-            if not kline:
+        success_count = 0
+        for idx, code in enumerate(codes[:max_codes]):
+            if idx > 0 and idx % 5 == 0:
+                import time
+                print(f"  [量化模型] 进度: {idx}/{min(len(codes), max_codes)}，已成功 {success_count} 只", flush=True)
+                time.sleep(2)
+            kline = _get_kline(code, count=250)
+            if not kline or len(kline) < 60:
                 continue
             rows, targets = compute_features_vectorized(kline)
             if rows and targets:
                 all_features.extend(rows)
                 all_targets.extend(targets)
+                success_count += 1
                 print(f"    {code}: {len(rows)} 条样本", flush=True)
 
         if len(all_features) < 50:
@@ -313,6 +378,7 @@ class QuantScorer:
         print(f"  [量化模型] 验证集 MAE: {val_mae:.2f}%, 相关系数: {val_corr:.3f}", flush=True)
 
         self._save()
+        self._write_last_train()
         print(f"  [量化模型] 模型已保存: {self.model_path}", flush=True)
 
         # 打印特征重要性
@@ -342,6 +408,15 @@ class QuantScorer:
         """如果模型不存在则训练"""
         if not self.is_trained():
             return self.train(codes=codes)
+        return True
+
+    def train_if_expired(self, interval_days=7, codes=None):
+        """如果距离上次训练超过 interval_days 则重新训练"""
+        days_ago = self.get_last_train_days_ago()
+        if days_ago is None or days_ago >= interval_days:
+            print(f"  [量化模型] 上次训练距今 {days_ago or 'N/A'} 天 >= {interval_days} 天，开始重新训练", flush=True)
+            return self.train(codes=codes)
+        print(f"  [量化模型] 上次训练距今 {days_ago} 天 < {interval_days} 天，无需重新训练", flush=True)
         return True
 
 

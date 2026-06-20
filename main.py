@@ -4,6 +4,8 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import NEWS_SOURCES, MAX_NEWS, DATA_DIR, MAX_SCREENED_STOCKS
+from config import USE_ML_SCORING, TRAIN_INTERVAL_DAYS, AUTO_REVIEW_ENABLED, AUTO_REVIEW_LOOKBACK_DAYS
+from config import AUTO_REVIEW_CHECK_DAYS, AUTO_REVIEW_PROFIT_THRESHOLD
 from collector import collect_all
 from analyzer import analyze_news_batch, analyze_stocks_batch
 from market import get_stock_analysis
@@ -27,6 +29,20 @@ def main():
 
     stock_results = None
     report_parts = []
+
+    if USE_ML_SCORING:
+        print("【第0步】检查量化模型是否需要重新训练...", flush=True)
+        try:
+            from quant_model import QuantScorer
+            scorer = QuantScorer()
+            if not scorer.is_trained():
+                print("  [量化模型] 模型不存在，开始训练...", flush=True)
+                scorer.train()
+            else:
+                scorer.train_if_expired(interval_days=TRAIN_INTERVAL_DAYS)
+        except Exception as e:
+            print(f"  [量化模型] 检查失败: {e}", flush=True)
+        print(flush=True)
 
     print("【第1步】采集信息...", flush=True)
     raw_news = collect_all(NEWS_SOURCES)
@@ -118,6 +134,23 @@ def main():
     bt_report = print_backtest_report(bt_result)
     report_parts.append(bt_report)
     print(flush=True)
+
+    if AUTO_REVIEW_ENABLED:
+        print("【第10.5步】自动复盘追踪...", flush=True)
+        try:
+            ar_result = storage.auto_review(
+                lookback_days=AUTO_REVIEW_LOOKBACK_DAYS,
+                check_days=AUTO_REVIEW_CHECK_DAYS,
+                profit_threshold=AUTO_REVIEW_PROFIT_THRESHOLD,
+            )
+            print(f"  自动复盘完成: 新增 {ar_result['reviewed']} 条, 跳过 {ar_result['skipped']} 条", flush=True)
+            if ar_result["results"]:
+                for line in ar_result["results"][-5:]:
+                    print(line, flush=True)
+            print(flush=True)
+        except Exception as e:
+            print(f"  [自动复盘失败] {e}", flush=True)
+            print(flush=True)
 
     print("【第11步】推送通知...", flush=True)
     wechat_summary = build_wechat_summary(results, stock_results, capital_data)

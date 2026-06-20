@@ -271,3 +271,151 @@ class ScoutStorage:
         for outcome, cnt in rows:
             stats[outcome] = cnt
         return stats
+
+    def auto_review(self, lookback_days=90, check_days=None, profit_threshold=3.0):
+        """自动复盘：追踪历史预判后续走势，无需手动评价
+
+        Args:
+            lookback_days: 回溯多少天内的预判
+            check_days: 发出预判后 N 个交易日复查（列表）
+            profit_threshold: 涨幅超过此值视为"正确"（%）
+
+        Returns:
+            dict: { "reviewed": int, "skipped": int, "results": [str] }
+        """
+        if check_days is None:
+            check_days = [5, 10]
+
+        results = []
+        reviewed = 0
+        skipped = 0
+
+        analysis_list = self._get_analysis_with_codes(days=lookback_days)
+        for item in analysis_list:
+            aid, report_date, analysis_raw, advice = item
+            already_reviewed = self._is_reviewed(aid)
+            if already_reviewed:
+                continue
+
+            codes = self._extract_codes(analysis_raw)
+            if not codes:
+                skipped += 1
+                continue
+
+            report_dt = datetime.strptime(report_date, "%Y-%m-%d")
+            days_since = (datetime.now() - report_dt).days
+            if days_since < min(check_days):
+                skipped += 1
+                continue
+
+            best_ret = None
+            best_code = None
+            for code in codes:
+                ret = self._check_stock_performance(code, report_date, check_days)
+                if ret is not None:
+                    if best_ret is None or abs(ret) > abs(best_ret):
+                        best_ret = ret
+                        best_code = code
+
+            if best_ret is None:
+                skipped += 1
+                continue
+
+            if best_ret > profit_threshold:
+                outcome = "正确"
+                detail = f"自动复盘: {best_code} 最高涨幅 {best_ret:+.2f}%"
+            elif best_ret > -profit_threshold:
+                outcome = "部分正确"
+                detail = f"自动复盘: {best_code} 涨幅 {best_ret:+.2f}%（在阈值±{profit_threshold}%内）"
+            else:
+                outcome = "错误"
+                detail = f"自动复盘: {best_code} 最大跌幅 {best_ret:+.2f}%"
+
+            self.save_review(aid, outcome, detail)
+            reviewed += 1
+            results.append(f"  {report_date} #{aid}: {outcome} ({detail})")
+
+        return {
+            "reviewed": reviewed,
+            "skipped": skipped,
+            "results": results,
+        }
+
+    def _get_analysis_with_codes(self, days=90):
+        """获取近期含股票代码的分析记录"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute(
+            """SELECT a.id, a.report_date, a.analysis_raw, a.advice
+               FROM analysis a
+               WHERE a.report_date >= date('now', ?)
+               ORDER BY a.report_date ASC""",
+            (f"-{days} days",)
+        )
+        rows = c.fetchall()
+        conn.close()
+        result = []
+        for row in rows:
+            result.append({"id": row[0], "date": row[1], "raw": row[2], "advice": row[3]})
+        return result
+
+    def _is_reviewed(self, analysis_id):
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM tracking WHERE analysis_id=?", (analysis_id,))
+        cnt = c.fetchone()[0]
+        conn.close()
+        return cnt > 0
+
+    def _extract_codes(self, raw_json):
+        if not raw_json:
+            return []
+        try:
+            raw = json.loads(raw_json)
+        except (json.JSONDecodeError, TypeError):
+            return []
+        codes = raw.get("stock_codes", [])
+        valid = []
+        for code in codes:
+            code = code.strip()
+            if not code:
+                continue
+            if not (code.startswith("6") or code.startswith("0") or code.startswith("3")):
+                continue
+            if len(code) != 6:
+                continue
+            valid.append(code)
+        return valid
+
+    def _check_stock_performance(self, code, report_date, check_days):
+        """检查股票在 report_date 后的 check_days 内表现"""
+        from market import get_kline
+        max_needed = max(check_days) + 10
+        kline = get_kline(code, count=max_needed + 20)
+        if not kline:
+            return None
+        kline = sorted(kline, key=lambda x: x["date"])
+        start_idx = -1
+        for i, k in enumerate(kline):
+            if k["date"] >= report_date[:10]:
+                start_idx = i
+                break
+        if start_idx < 0 or start_idx >= len(kline) - 1:
+            return None
+        entry_price = kline[start_idx + 1]["open"]
+        if entry_price <= 0:
+            return None
+        best_ret = None
+        for cd in check_days:
+            idx = min(start_idx + 1 + cd, len(kline) - 1)
+            price = kline[idx]["open"]
+            ret = (price - entry_price) / entry_price * 100
+            if best_ret is None or abs(ret) > abs(best_ret):
+                best_ret = ret
+        if best_ret is not None:
+            for i in range(start_idx + 1, min(start_idx + 1 + max(check_days), len(kline))):
+                low = kline[i]["low"]
+                ret = (low - entry_price) / entry_price * 100
+                if best_ret is None or ret < best_ret:
+                    best_ret = ret
+        return best_ret

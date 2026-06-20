@@ -54,25 +54,30 @@ def get_kline(code, count=60):
     sid = _stock_sina_id(code)
     url = f"https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol={sid}&scale=240&ma=5&datalen={count}"
     headers = {**HEADERS, "Referer": "https://finance.sina.com.cn"}
-    try:
-        resp = requests.get(url, headers=headers, timeout=10, proxies=_bypass_proxy())
-        data = resp.json()
-        if not data or not isinstance(data, list):
+    for attempt in range(2):
+        try:
+            resp = requests.get(url, headers=headers, timeout=30, proxies=_bypass_proxy())
+            data = resp.json()
+            if not data or not isinstance(data, list):
+                return []
+            result = []
+            for item in data:
+                result.append({
+                    "date": item.get("day", ""),
+                    "open": float(item.get("open", 0)),
+                    "close": float(item.get("close", 0)),
+                    "high": float(item.get("high", 0)),
+                    "low": float(item.get("low", 0)),
+                    "volume": int(item.get("volume", 0)),
+                })
+            return result
+        except Exception as e:
+            if attempt == 0:
+                import time
+                time.sleep(3)
+                continue
+            print(f"  [K线获取失败] {code} - {e}", flush=True)
             return []
-        result = []
-        for item in data:
-            result.append({
-                "date": item.get("day", ""),
-                "open": float(item.get("open", 0)),
-                "close": float(item.get("close", 0)),
-                "high": float(item.get("high", 0)),
-                "low": float(item.get("low", 0)),
-                "volume": int(item.get("volume", 0)),
-            })
-        return result
-    except Exception as e:
-        print(f"  [K线获取失败] {code} - {e}", flush=True)
-        return []
 
 
 class StockTrendAnalyzer:

@@ -6,14 +6,27 @@ from datetime import datetime
 from utils import now_str
 
 
-def fetch_url(url, timeout=15, retries=2):
+try:
+    import ssl
+    _NO_VERIFY_CTX = ssl._create_unverified_context()
+except Exception:
+    _NO_VERIFY_CTX = None
+
+
+def fetch_url(url, timeout=15, retries=2, verify=True):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                       "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     for attempt in range(retries):
         try:
-            resp = requests.get(url, headers=headers, timeout=timeout)
+            kwargs = {"headers": headers, "timeout": timeout}
+            if not verify and _NO_VERIFY_CTX is not None:
+                kwargs["verify"] = False
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                resp = requests.get(url, **kwargs)
             resp.encoding = "utf-8"
             return resp.text
         except Exception as e:
@@ -155,8 +168,21 @@ def parse_rss(content):
     return items
 
 
-def parse_10jqka(html):
-    return _extract_links_generic(html, "同花顺", "10jqka", min_length=15, max_items=50)
+def parse_10jqka(html, fallback_url="https://www.10jqka.com.cn/"):
+    items = _extract_links_generic(html, "同花顺", "10jqka", min_length=15, max_items=50)
+    if items:
+        return items
+    print("  [同花顺] 主URL无结果，尝试备选URL...", flush=True)
+    try:
+        fallback_html = fetch_url(fallback_url, timeout=20, verify=False)
+        if fallback_html:
+            items2 = _extract_links_generic(fallback_html, "同花顺", "10jqka", min_length=15, max_items=50)
+            if items2:
+                return items2
+    except Exception:
+        pass
+    print("  [同花顺] 备选URL也无数据，跳过同花顺", flush=True)
+    return []
 
 
 def parse_stcn(html):
@@ -176,16 +202,24 @@ def collect_from_source(source_config):
     name = source_config["name"]
     url = source_config["url"]
     parser_key = source_config.get("parser", "")
+    fallback_url = source_config.get("fallback_url", "")
     print(f"  正在采集: {name} ...", flush=True)
-    html = fetch_url(url)
+    verify = parser_key != "10jqka"
+    html = fetch_url(url, verify=verify)
+    if not html and fallback_url:
+        print(f"  [重试] {name} 尝试备选URL...", flush=True)
+        html = fetch_url(fallback_url, timeout=20, verify=verify)
     if not html:
         print(f"  [失败] {name} 无返回", flush=True)
         return []
-    parser_fn = PARSER_MAP.get(parser_key)
-    if not parser_fn:
-        print(f"  [跳过] {name} 未找到解析器: {parser_key}", flush=True)
-        return []
-    items = parser_fn(html)
+    if parser_key == "10jqka":
+        items = parse_10jqka(html, fallback_url=fallback_url)
+    else:
+        parser_fn = PARSER_MAP.get(parser_key)
+        if not parser_fn:
+            print(f"  [跳过] {name} 未找到解析器: {parser_key}", flush=True)
+            return []
+        items = parser_fn(html)
     print(f"  [完成] {name} 采集到 {len(items)} 条", flush=True)
     return items
 

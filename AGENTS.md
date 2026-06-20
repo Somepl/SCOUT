@@ -30,32 +30,37 @@ SCOUT (Signal Capture, Observation, Understanding & Track) 是一个面向 A 股
 7. 热点筛选 — 新增screener.py模块，基于新闻分析自动发现热点板块并推荐相关个股
 8. 狙击清单 — 新增strategist.py模块，生成可执行的交易计划（买点/止损/仓位分配）
 9. Web仪表盘 — 新增app.py + templates/，Flask Web可视化看板
+10. 策略回测 — 新增backtest.py模块，支持多持仓周期回测、胜率/收益率/最大回撤统计
+11. 量化评分模型 — 新增quant_model.py模块，LightGBM 61维特征替代固定规则评分
 
 ## 技术栈
 - Python 3.14+
 - requests / beautifulsoup4 / lxml（数据采集 + 行情API直连）
 - openai（AI API 调用，兼容任意OpenAI格式的API）
 - SQLite（本地存储）
+- numpy / pandas / scipy（数值计算 + 特征工程）
+- lightgbm（量化评分模型，61维特征）
+- flask（Web可视化看板）
+- ServerChan（微信推送）
 
 ## 项目结构
-- `main.py` — 主程序入口（9步全链路：采集→分析→存储→资金面→狙击清单→推送）
-- `config.py` — 配置文件（API Key、信息源、推送设置、筛选配置）
+- `main.py` — 主程序入口（11步全链路：采集→分析→存储→筛选→行情→资金→回测→推送）
+- `config.py` — 配置文件（API Key、信息源、推送设置、筛选配置、USE_ML_SCORING）
 - `collector.py` — 采集器（4个信息源）
-- `market.py` — 行情数据模块（新浪API获取实时行情+60日K线+技术指标）
+- `market.py` — 行情数据模块（新浪API获取实时行情+60日K线+技术指标+规则评分+量化集成）
 - `analyzer.py` — AI分析引擎（新闻分析 + 个股交易决策仪表盘）
-- `reporter.py` — 报告生成（新闻简报 + 个股仪表盘 + 资金面 + 微信摘要）
+- `reporter.py` — 报告生成（新闻简报 + 个股仪表盘 + 资金面 + 微信摘要 + 市场光信号）
 - `screener.py` — 热点板块发现 + 自动筛选候选股票（板块映射表 + AI推荐）
 - `strategist.py` — 狙击清单 + 仓位分配 + 交易计划生成
-- `capital.py` — 资金面数据（北向资金、融资融券余额）
+- `capital.py` — 资金面数据（北向资金、融资融券余额、沪深港通十大成交）
 - `notifier.py` — 微信推送（ServerChan）
-- `storage.py` — SQLite数据库
+- `storage.py` — SQLite数据库（含stock_analysis表 + 回测接口）
 - `review.py` — 预判复盘脚本
-- `backtest.py` — 策略回测引擎（验证历史买入建议的有效性）
+- `backtest.py` — 策略回测引擎（多持仓周期 + 止损 -5%）
+- `quant_model.py` — LightGBM 量化评分模型（61维特征 + 训练 + 推理）
 - `utils.py` — 工具函数
-- `app.py` — Flask Web可视化看板
+- `app.py` — Flask Web可视化看板（6个路由）
 - `templates/` — HTML模板（base/index/news/stocks/capital/history）
-- `backtest.py` — 策略回测引擎（验证历史买入建议的有效性）
-- `quant_model.py` — LightGBM 量化评分模型（替代固定规则评分）
 
 ## 运行方式
 手动运行：
@@ -75,6 +80,8 @@ python -X utf8 review.py
 - AI_API_KEY：硅基流动 API Key（当前已配置）
 - AI_MODEL：Qwen/Qwen2.5-7B-Instruct（永久免费）
 - MAX_NEWS：20（每天分析条数，可调）
+- MAX_SCREENED_STOCKS：5（每日最多分析个股数）
+- USE_ML_SCORING：True（启用LightGBM量化评分）
 - PUSH_WECHAT：微信推送开关（默认False）
 - SERVER_CHAN_KEY：ServerChan密钥（需用户自行获取）
 
@@ -91,14 +98,26 @@ python -X utf8 review.py
 - 所有分析仅供参考，不构成投资建议
 - 使用公开信息，不涉及内幕交易
 
+## 当前局限
+- 同花顺解析器 SSL EOF 错误，暂无可采集数据
+- GitHub push 网络不通，commit 仅本地保存
+- 量化模型仅 3 只股票 × 180 天训练数据，泛化不足
+- 回测因历史买入信号不足，暂无可交易记录
+
 ## 存档指令
 - 用户要求每次对话结束前（或修改重要代码后）执行 git add -A && git commit -m "描述" && git push origin main
 - GitHub 远程仓库: https://github.com/Somepl/SCOUT.git (main分支)
 - 直接覆盖推送，不新建分支
 
 ## 后续可改进方向
-- 自动复盘优化算法权重
-- 更强AI模型（如DeepSeek切换）
-- 接入英文财经新闻源
-- 策略回测系统
+| 方向 | 优先级 | 说明 |
+|------|--------|------|
+| 扩充量化训练数据 | 高 | 从3只→30+股票，更长历史周期 |
+| 量化模型自动重训练 | 中 | 每周/月自动增量训练 |
+| 切换更强AI模型 | 中 | DeepSeek / GPT-4o-mini（¥1-2/月） |
+| 自动复盘追踪 | 中 | 系统自动跟踪预判后续走势 |
+| 接入英文信息源 | 低 | Reuters / Bloomberg |
+| 修复同花顺解析器 | 中 | SSL 握手问题或换备用源 |
+| Web看板远程部署 | 低 | 云服务器或 NAS |
+| SSH/代理解决Git推送 | 低 | 更换网络环境 |
 

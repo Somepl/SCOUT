@@ -122,9 +122,29 @@ class StockTrendAnalyzer:
             support_ma5, support_ma10, macd_info, rsi_info
         )
 
+        model_score = _get_quant_score(kline, code, score)
+        blended_score = int(round(score * 0.5 + model_score * 0.5))
+
+        if blended_score >= 75 and trend in ("强势多头", "多头排列"):
+            final_signal = "强烈买入"
+        elif blended_score >= 60 and trend in ("强势多头", "多头排列", "弱势多头"):
+            final_signal = "买入"
+        elif blended_score >= 45:
+            final_signal = "持有"
+        elif blended_score >= 30:
+            final_signal = "观望"
+        elif trend in ("空头排列", "强势空头"):
+            final_signal = "强烈卖出"
+        else:
+            final_signal = "卖出"
+
         return {
             "code": code,
             "price": price,
+            "model_score": model_score,
+            "rule_score": score,
+            "score": blended_score,
+            "signal": final_signal,
             "ma5": ma5, "ma10": ma10, "ma20": ma20, "ma60": ma60,
             "bias_ma5": bias5, "bias_ma10": bias10, "bias_ma20": bias20,
             "ma_alignment": alignment,
@@ -412,6 +432,36 @@ def get_market_phase():
 
 
 _analyzer = StockTrendAnalyzer()
+
+
+def get_scorer():
+    try:
+        import importlib
+        qm = importlib.import_module("quant_model")
+        s = qm.QuantScorer()
+        if s.is_trained():
+            return s
+        s.train_if_needed()
+        return s if s.is_trained() else None
+    except Exception:
+        return None
+
+
+_quant_scorer = None
+
+
+def _get_quant_score(kline, code, rule_score):
+    global _quant_scorer
+    if _quant_scorer is None:
+        _quant_scorer = get_scorer()
+    if _quant_scorer:
+        try:
+            ms = _quant_scorer.predict(kline)
+            if ms is not None:
+                return ms
+        except Exception:
+            pass
+    return rule_score
 
 
 def get_stock_analysis(code):

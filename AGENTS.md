@@ -54,6 +54,8 @@ SCOUT (Signal Capture, Observation, Understanding & Track) 是一个面向 A 股
 - `utils.py` — 工具函数
 - `app.py` — Flask Web可视化看板
 - `templates/` — HTML模板（base/index/news/stocks/capital/history）
+- `backtest.py` — 策略回测引擎（验证历史买入建议的有效性）
+- `quant_model.py` — LightGBM 量化评分模型（替代固定规则评分）
 
 ## 运行方式
 手动运行：

@@ -167,6 +167,23 @@ def main():
             print(f"  [自动复盘失败] {e}", flush=True)
             print(flush=True)
 
+    if AUTO_REVIEW_ENABLED:
+        print("【第10.6步】个股仪表盘复盘...", flush=True)
+        try:
+            ars_result = storage.auto_review_stocks(
+                lookback_days=AUTO_REVIEW_LOOKBACK_DAYS,
+                check_days=AUTO_REVIEW_CHECK_DAYS,
+                profit_threshold=AUTO_REVIEW_PROFIT_THRESHOLD,
+            )
+            print(f"  个股仪表盘复盘: 新增 {ars_result['reviewed']} 条, 跳过 {ars_result['skipped']} 条", flush=True)
+            if ars_result["results"]:
+                for line in ars_result["results"][-5:]:
+                    print(line, flush=True)
+            print(flush=True)
+        except Exception as e:
+            print(f"  [个股仪表盘复盘失败] {e}", flush=True)
+            print(flush=True)
+
     # 每日推荐追踪摘要
     try:
         summary = storage.get_pick_summary(since_days=90)

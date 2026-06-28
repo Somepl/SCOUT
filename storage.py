@@ -498,7 +498,11 @@ class ScoutStorage:
 
         analysis_list = self._get_analysis_with_codes(days=lookback_days)
         for item in analysis_list:
-            aid, report_date, analysis_raw, advice = item
+            aid = item["id"]
+            report_date = item["date"]
+            analysis_raw = item["raw"]
+            advice = item["advice"]
+
             already_reviewed = self._is_reviewed(aid)
             if already_reviewed:
                 continue
@@ -508,7 +512,7 @@ class ScoutStorage:
                 skipped += 1
                 continue
 
-            report_dt = datetime.strptime(report_date, "%Y-%m-%d")
+            report_dt = datetime.strptime(str(report_date)[:10], "%Y-%m-%d")
             days_since = (datetime.now() - report_dt).days
             if days_since < min(check_days):
                 skipped += 1
@@ -552,6 +556,95 @@ class ScoutStorage:
             "results": results,
         }
 
+    def auto_review_stocks(self, lookback_days=90, check_days=None, profit_threshold=2.0):
+        """自动复盘个股仪表盘预判（stock_analysis 表）— 有明确股票代码和操作建议
+
+        Args:
+            lookback_days: 回溯天数
+            check_days: 持有期列表
+            profit_threshold: 正确阈值（%）
+
+        Returns:
+            dict: { "reviewed": int, "skipped": int, "results": [str] }
+        """
+        if check_days is None:
+            check_days = [10, 20]
+
+        results = []
+        reviewed = 0
+        skipped = 0
+
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute(
+            """SELECT id, code, name, signal, action, report_date
+               FROM stock_analysis
+               WHERE report_date >= date('now', ?)
+                 AND action IN ('买入', '卖出', '加仓', '减仓')
+               ORDER BY report_date ASC""",
+            (f"-{lookback_days} days",)
+        )
+        rows = c.fetchall()
+        conn.close()
+
+        for row in rows:
+            sa_id, code, name, signal, action, report_date = row
+
+            # 检查是否已复盘（用 sa_id + 'stock' 前缀区分新闻分析）
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            c.execute(
+                "SELECT COUNT(*) FROM tracking WHERE analysis_id=? AND outcome_detail LIKE 'stock:%'",
+                (-sa_id,)
+            )
+            cnt = c.fetchone()[0]
+            conn.close()
+            if cnt > 0:
+                continue
+
+            report_dt = datetime.strptime(str(report_date)[:10], "%Y-%m-%d")
+            days_since = (datetime.now() - report_dt).days
+            if days_since < min(check_days):
+                skipped += 1
+                continue
+
+            result = self._check_stock_performance(code, report_date, check_days)
+            if result is None:
+                skipped += 1
+                continue
+
+            ret, worst = result
+
+            if ret > profit_threshold:
+                outcome = "正确"
+                detail = f"stock:{code} {name} 预测{action} 涨幅{ret:+.2f}%"
+            elif ret > -profit_threshold:
+                outcome = "部分正确"
+                detail = f"stock:{code} {name} 预测{action} 涨幅{ret:+.2f}%（阈值±{profit_threshold}%）"
+            else:
+                outcome = "错误"
+                detail = f"stock:{code} {name} 预测{action} 跌幅{ret:+.2f}%"
+            if worst is not None and worst < -profit_threshold:
+                detail += f"（最深回撤{worst:.2f}%）"
+
+            # 存入 tracking 表（用 analysis_id 负值防冲突）
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            c.execute(
+                "INSERT INTO tracking (analysis_id, actual_outcome, outcome_detail) VALUES (?,?,?)",
+                (-sa_id, outcome, detail)
+            )
+            conn.commit()
+            conn.close()
+            reviewed += 1
+            results.append(f"  {report_date} #{sa_id} {name}({code}): {outcome} ({detail})")
+
+        return {
+            "reviewed": reviewed,
+            "skipped": skipped,
+            "results": results,
+        }
+
     def _get_analysis_with_codes(self, days=90):
         """获取近期含股票代码的分析记录"""
         conn = sqlite3.connect(self.db_path)
@@ -581,25 +674,33 @@ class ScoutStorage:
     def _extract_codes(self, raw_json):
         if not raw_json:
             return []
-        # 尝试 JSON 解析
-        if raw_json.strip().startswith("{"):
-            try:
-                raw = json.loads(raw_json)
-                codes = raw.get("stock_codes", [])
-                valid = []
-                for code in codes:
-                    code = code.strip()
-                    if code and len(code) == 6 and code.isdigit() and code[0] in ("6", "0", "3"):
-                        valid.append(code)
-                return valid
-            except (json.JSONDecodeError, TypeError):
-                pass
-        # 非JSON → 正则提取6位数字股票代码
-        codes = re.findall(r'(?<![\.\d])([036]\d{5})(?![\.\d])', raw_json)
-        if not codes:
-            # 尝试更宽松匹配
-            codes = re.findall(r'\b([036]\d{5})\b', raw_json)
-        return list(set(codes))
+        valid_codes = []
+        # 从 JSON 的 stock_codes 字段提取
+        try:
+            raw = json.loads(raw_json)
+            codes = raw.get("stock_codes", [])
+            for code in codes:
+                code = str(code).strip()
+                if self._is_valid_code(code):
+                    valid_codes.append(code)
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            pass
+        # 从全文正则提取（兜底：即使 AI 没输出 stock_codes 字段也尝试抓）
+        raw_text = str(raw_json)
+        found = re.findall(r'(?<![\.\d])([036]\d{5})(?![\.\d])', raw_text)
+        for code in found:
+            if self._is_valid_code(code) and code not in valid_codes:
+                valid_codes.append(code)
+        return valid_codes
+
+    @staticmethod
+    def _is_valid_code(code):
+        """验证A股代码合法性"""
+        if not code or len(code) != 6 or not code.isdigit():
+            return False
+        prefix = code[:3]
+        valid_prefixes = {"600", "601", "603", "605", "000", "001", "002", "003", "300", "301", "688", "689"}
+        return prefix in valid_prefixes
 
     def _check_stock_performance(self, code, report_date, check_days):
         """检查股票在 report_date 后的 check_days 内表现。

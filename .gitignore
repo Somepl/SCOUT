@@ -3,6 +3,8 @@ __pycache__/
 *.pyo
 data/scout.db
 data/reports/
+data/quant_last_train.txt
+*.log
 .env
 venv/
 .venv/

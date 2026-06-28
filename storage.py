@@ -1,6 +1,7 @@
 import sqlite3
 import os
 import json
+import re
 from datetime import datetime
 from utils import ensure_dir, now_str, today_str
 
@@ -477,7 +478,7 @@ class ScoutStorage:
             stats[outcome] = cnt
         return stats
 
-    def auto_review(self, lookback_days=90, check_days=None, profit_threshold=3.0):
+    def auto_review(self, lookback_days=90, check_days=None, profit_threshold=2.0):
         """自动复盘：追踪历史预判后续走势，无需手动评价
 
         Args:
@@ -489,7 +490,7 @@ class ScoutStorage:
             dict: { "reviewed": int, "skipped": int, "results": [str] }
         """
         if check_days is None:
-            check_days = [5, 10]
+            check_days = [10, 20]  # 改为较长持有期，给更多时间验证
 
         results = []
         reviewed = 0
@@ -580,22 +581,25 @@ class ScoutStorage:
     def _extract_codes(self, raw_json):
         if not raw_json:
             return []
-        try:
-            raw = json.loads(raw_json)
-        except (json.JSONDecodeError, TypeError):
-            return []
-        codes = raw.get("stock_codes", [])
-        valid = []
-        for code in codes:
-            code = code.strip()
-            if not code:
-                continue
-            if not (code.startswith("6") or code.startswith("0") or code.startswith("3")):
-                continue
-            if len(code) != 6:
-                continue
-            valid.append(code)
-        return valid
+        # 尝试 JSON 解析
+        if raw_json.strip().startswith("{"):
+            try:
+                raw = json.loads(raw_json)
+                codes = raw.get("stock_codes", [])
+                valid = []
+                for code in codes:
+                    code = code.strip()
+                    if code and len(code) == 6 and code.isdigit() and code[0] in ("6", "0", "3"):
+                        valid.append(code)
+                return valid
+            except (json.JSONDecodeError, TypeError):
+                pass
+        # 非JSON → 正则提取6位数字股票代码
+        codes = re.findall(r'(?<![\.\d])([036]\d{5})(?![\.\d])', raw_json)
+        if not codes:
+            # 尝试更宽松匹配
+            codes = re.findall(r'\b([036]\d{5})\b', raw_json)
+        return list(set(codes))
 
     def _check_stock_performance(self, code, report_date, check_days):
         """检查股票在 report_date 后的 check_days 内表现。

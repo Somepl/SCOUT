@@ -285,12 +285,19 @@ def build_stock_report(stock_results):
         lines.append(f"    仓位: {pos.get('suggested_position', 'N/A')}  |  {pos.get('position_management', '')}")
 
         rc = bp.get("risk_control", {})
+        seen_warnings = set()
         if rc.get("special_risks"):
             for risk in rc["special_risks"][:3]:
-                lines.append(f"    ⚠️ {risk}")
+                clean = risk.replace("⚠️ ", "").replace("⚠️", "").strip()
+                if clean and clean not in seen_warnings:
+                    seen_warnings.add(clean)
+                    lines.append(f"    ⚠️ {clean}")
 
         if cc.get("risk_warning"):
-            lines.append(f"    ⚠️ {cc['risk_warning']}")
+            clean = cc["risk_warning"].replace("⚠️ ", "").replace("⚠️", "").strip()
+            if clean and clean not in seen_warnings:
+                seen_warnings.add(clean)
+                lines.append(f"    ⚠️ {clean}")
 
         lines.append("")
 
@@ -301,6 +308,22 @@ def build_stock_report(stock_results):
     lines.append("  [!] 风险提示: 以上分析仅供参考，不构成投资建议")
     lines.append(SEP)
     return "\n".join(lines)
+
+
+def _is_offday(nb_data):
+    """判断当日是否为非交易日（所有数据都是 off_day）"""
+    if not nb_data:
+        return False
+    off_count = sum(1 for d in nb_data[:3] if d.get("note") in ("off_day", "data_failed"))
+    return off_count == len(nb_data[:3])
+
+
+def _get_last_trading_note(nb_data):
+    """获取最近交易日标注"""
+    for d in nb_data:
+        if d.get("note") == "last_trading_day":
+            return d
+    return None
 
 
 def build_capital_report(capital_data):
@@ -320,20 +343,35 @@ def build_capital_report(capital_data):
     nb = capital_data.get("northbound", [])
     mg = capital_data.get("margin", [])
 
+    offday = _is_offday(nb)
+
     if nb:
         lines.append("  【北向资金流向】")
         lines.append(SUB_SEP)
-        for day in nb[:5]:
-            net = day.get("total_net", 0)
-            arrow = "↑" if net > 0 else "↓"
-            lines.append(f"  {day['date']}  沪:{day.get('sh_net',0)/1e8:+.2f}亿  深:{day.get('sz_net',0)/1e8:+.2f}亿  合计:{net/1e8:+.2f}亿 {arrow}")
+        if offday:
+            last_trade = _get_last_trading_note(nb)
+            if last_trade:
+                net = last_trade.get("total_net", 0)
+                arrow = "↑" if net > 0 else "↓"
+                lines.append(f"  ⏸ 今日非交易日 | 最近({last_trade['date']}): {net/1e8:+.2f}亿 {arrow}")
+            else:
+                lines.append(f"  ⏸ 今日非交易日，暂无最新资金面数据")
+        else:
+            for day in nb[:5]:
+                net = day.get("total_net", 0)
+                arrow = "↑" if net > 0 else ("↓" if net < 0 else "—")
+                lines.append(f"  {day['date']}  沪:{day.get('sh_net',0)/1e8:+.2f}亿  深:{day.get('sz_net',0)/1e8:+.2f}亿  合计:{net/1e8:+.2f}亿 {arrow}")
         lines.append("")
 
     if mg:
         lines.append("  【融资融券余额】")
         lines.append(SUB_SEP)
-        for day in mg[:3]:
-            lines.append(f"  {day['date']}  两市合计: {day['total_yi']}亿  沪:{day['sh_yi']}亿  深:{day['sz_yi']}亿")
+        all_off = all(d.get("note") in ("off_day", "data_failed") for d in mg)
+        if all_off:
+            lines.append(f"  ⏸ 今日非交易日，融资融券数据暂无更新")
+        else:
+            for day in mg[:3]:
+                lines.append(f"  {day['date']}  两市合计: {day['total_yi']}亿  沪:{day['sh_yi']}亿  深:{day['sz_yi']}亿")
         lines.append("")
 
     cl = calc_capital_light(capital_data)
@@ -366,12 +404,25 @@ def build_wechat_summary(results, stock_results=None, capital_data=None):
         lines.append(f"【资金面信号】{cl['light']}  {cl['label']}")
         nb = capital_data.get("northbound", [])
         if nb and len(nb) > 0:
-            latest = nb[0]
-            net = latest.get("total_net", 0)
-            lines.append(f"北向资金: {net/1e8:+.2f}亿 ({latest.get('direction','')})")
+            offday = all(d.get("note") in ("off_day", "data_failed") for d in nb[:3])
+            if offday:
+                last_trade = _get_last_trading_note(nb)
+                if last_trade:
+                    net = last_trade.get("total_net", 0)
+                    lines.append(f"北向资金: 非交易日 | 最近({last_trade['date']}): {net/1e8:+.2f}亿")
+                else:
+                    lines.append("北向资金: 非交易日，数据暂缺")
+            else:
+                latest = nb[0]
+                net = latest.get("total_net", 0)
+                lines.append(f"北向资金: {net/1e8:+.2f}亿")
         mg = capital_data.get("margin", [])
         if mg and len(mg) > 0:
-            lines.append(f"融资融券: {mg[0].get('total_yi',0)}亿")
+            all_off = all(d.get("note") in ("off_day", "data_failed") for d in mg)
+            if all_off:
+                lines.append("融资融券: 非交易日，数据暂缺")
+            else:
+                lines.append(f"融资融券: {mg[0].get('total_yi',0)}亿")
         lines.append("")
 
     if high_items:

@@ -9,7 +9,7 @@ SCOUT 配置文件
 
 import os
 
-AI_API_KEY = os.environ.get("SCOUT_AI_API_KEY") or "sk-你的DeepSeek Key"
+AI_API_KEY = os.environ.get("SCOUT_AI_API_KEY") or "sk-c6e0fd911ea7493e857f45a41ab99b4f"
 AI_BASE_URL = "https://api.deepseek.com/v1"
 AI_MODEL = "deepseek-v4-flash"
 

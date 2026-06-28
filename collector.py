@@ -37,7 +37,10 @@ def _extract_links_generic(html, source_name, domain_filter, min_length=15, max_
         return items
     soup = BeautifulSoup(html, "lxml")
     seen = set()
-    exclude_keywords = ["导航", "登录", "注册", "搜索", "广告", "视频", "图片", "客户端"]
+    exclude_keywords = ["导航", "登录", "注册", "搜索", "广告", "视频", "图片",
+                         "客户端", "下载", "app", "APP", "App", "随时随地",
+                         "免责声明", "风险提示", "股市有风险", "用户协议",
+                         "隐私政策", "意见反馈", "客服", "帮助中心"]
     for a in soup.select("a[href]"):
         title = a.get_text(strip=True)
         href = a.get("href", "")
@@ -220,9 +223,34 @@ def collect_from_source(source_config):
     return items
 
 
+def _is_ad_or_spam(item):
+    """检测是否广告/垃圾内容"""
+    title = (item.get("title", "") or "")
+    content = (item.get("content", "") or "")
+    text = title + " " + content
+    ad_patterns = [
+        "下载", "App", "随时随地看", "开户", "炒股软件",
+        "点击领取", "免费领取", "扫码", "二维码",
+        "免责声明", "风险提示", "市场有风险",
+    ]
+    for pat in ad_patterns:
+        if pat in text:
+            return True
+    # 短标题 + 无实质内容
+    if len(title) < 8 and len(content) < 15:
+        return True
+    return False
+
+
 def collect_all(sources):
     all_news = []
     for src in sources:
         items = collect_from_source(src)
         all_news.extend(items)
+    # 广告过滤
+    before = len(all_news)
+    all_news = [item for item in all_news if not _is_ad_or_spam(item)]
+    after = len(all_news)
+    if before != after:
+        print(f"  [过滤] 移除 {before - after} 条广告/垃圾信息", flush=True)
     return all_news

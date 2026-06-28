@@ -154,6 +154,38 @@ def _sentiment_score(news_results):
     return (bullish - bearish) / (bullish + bearish) * 100
 
 
+def _safety_overrides(m, action):
+    """安全强制检查：某些技术形态下无论AI说什么都不可买入
+    返回 (new_action, reasons)
+    """
+    reasons = []
+    new_action = action
+
+    # 1. RSI超买（>70）→ 至少降级为持有
+    rsi6 = m.get("rsi6", 70)
+    if rsi6 and rsi6 > 70 and action in ("买入", "加仓"):
+        new_action = "持有"
+        reasons.append(f"RSI({rsi6:.0f})超买>70")
+
+    # 2. 放量下跌 → 不可买入
+    vol_status = m.get("volume_status", "")
+    if vol_status == "放量下跌" and action in ("买入", "加仓"):
+        new_action = "观望"
+        reasons.append("放量下跌")
+    # 缩量下跌也不建议买入
+    if vol_status == "缩量下跌" and action in ("买入", "加仓"):
+        new_action = "观望"
+        reasons.append("缩量下跌")
+
+    # 3. 乖离过大（已离均线太远）
+    bias_ma5 = m.get("bias_ma5", 0)
+    if bias_ma5 and bias_ma5 > 8 and action in ("买入", "加仓"):
+        new_action = "持有"
+        reasons.append(f"乖离MA5+{bias_ma5:.1f}%偏离过大")
+
+    return new_action, reasons
+
+
 def _pick_rank(stock_results, news_results, capital_data=None):
     scored = []
     for r in stock_results:
@@ -167,6 +199,12 @@ def _pick_rank(stock_results, news_results, capital_data=None):
         score = m.get("score", 0) or 0
         trend_strength = m.get("trend_strength", 0) or 0
         vol_status = m.get("volume_status", "")
+
+        # 安全强制检查（AI可能忽略的技术风险）
+        safe_action, safety_reasons = _safety_overrides(m, action)
+        if safe_action != action:
+            # 如果被安全规则降级了，但rank_score仍可用于排序
+            action = safe_action
 
         if action not in ("买入", "加仓") and signal not in ("强烈买入", "买入"):
             continue
@@ -236,6 +274,7 @@ def _pick_rank(stock_results, news_results, capital_data=None):
             "volume_status": vol_status,
             "ma_alignment": m.get("ma_alignment", ""),
             "conviction": conviction,
+            "safety_overrides": safety_reasons,
         })
 
     scored.sort(key=lambda x: x["rank_score"], reverse=True)
@@ -293,6 +332,9 @@ def build_picks_report(picks, news_results):
             lines.append(f"    信号: {sig_detail}")
         lines.append(f"    当前价: {p['price']:.2f}  |  涨跌: {p['change_pct']:+.2f}%  |  评分: {p['score']}/100  优先级: {alloc_pct}仓位")
         lines.append(f"    策略: {p['action']}  |  趋势: {p['trend']}  |  量能: {p['volume_status']}")
+        if p.get('safety_overrides'):
+            for r in p['safety_overrides']:
+                lines.append(f"    ⛔ 安全规则: {r}")
         lines.append("")
         lines.append(f"    【交易计划】")
         lines.append(f"    理想买点: {p['ideal_entry']}")

@@ -25,6 +25,29 @@ def _fetch_json(url, params=None):
         return None
 
 
+def _is_non_trading_day(data_result):
+    """检查API返回的数据是否全零（非交易日特征）"""
+    klines = data_result.get("klines", []) if data_result else []
+    if not klines:
+        return False
+    all_zero = True
+    for line in klines[:3]:
+        parts = line.split(",")
+        if len(parts) >= 5:
+            if parts[1] or parts[2]:
+                all_zero = False
+                break
+    return all_zero
+
+
+def _find_last_valid_entry(entries):
+    """从数据列表末尾向前找第一条 note='ok' 的记录"""
+    for item in reversed(entries):
+        if item.get("note") == "ok":
+            return item
+    return None
+
+
 def get_northbound_flow(days=10):
     url = "https://push2.eastmoney.com/api/qt/kamt.kline/get"
     params = {
@@ -41,6 +64,9 @@ def get_northbound_flow(days=10):
     if not klines:
         return _northbound_fallback(days)
 
+    # 检测非交易日（全零数据）
+    is_off_day = _is_non_trading_day(data["data"])
+
     result = []
     for line in klines:
         parts = line.split(",")
@@ -55,9 +81,39 @@ def get_northbound_flow(days=10):
             "sh_net": sh_net,
             "sz_net": sz_net,
             "total_net": total_net,
-            "direction": "净流入" if total_net > 0 else "净流出",
-            "note": "ok",
+            "direction": "净流入" if total_net > 0 else ("净流出" if total_net < 0 else ""),
+            "note": "ok" if (sh_net or sz_net) else "off_day",
         })
+
+    # 若非交易日且无有效数据，用最近交易日数据填充
+    if is_off_day:
+        from datetime import timedelta
+        # 再往前拉取更多天找有效数据
+        for extra in [20, 30]:
+            more_data = _fetch_json(url, {**params, "lmt": str(days + extra)})
+            if not more_data or more_data.get("data") is None:
+                continue
+            more_klines = more_data["data"].get("klines", [])
+            for line in more_klines:
+                parts = line.split(",")
+                if len(parts) >= 5 and parts[1]:
+                    found_date = parts[0]
+                    found_sh = float(parts[1]) if parts[1] else 0
+                    found_sz = float(parts[2]) if parts[2] else 0
+                    total = found_sh + found_sz
+                    if total != 0:
+                        # 在结果头部插入最近有效交易日数据
+                        result.insert(0, {
+                            "date": found_date,
+                            "sh_net": found_sh,
+                            "sz_net": found_sz,
+                            "total_net": total,
+                            "direction": "净流入" if total > 0 else "净流出",
+                            "note": "last_trading_day",
+                        })
+                        break
+            if len(result) > 0 and result[0].get("note") != "off_day":
+                break
 
     return result
 
@@ -66,14 +122,9 @@ def _northbound_fallback(days=10):
     rows = []
     for i in range(min(days, 5)):
         d = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
-        if i == 0:
-            rows.append({"date": d, "sh_net": 0, "sz_net": 0,
-                        "total_net": 0, "direction": "数据延迟",
-                        "note": "data_failed"})
-        else:
-            rows.append({"date": d, "sh_net": 0, "sz_net": 0,
-                        "total_net": 0, "direction": "暂无数据",
-                        "note": "data_failed"})
+        rows.append({"date": d, "sh_net": 0, "sz_net": 0,
+                    "total_net": 0, "direction": "",
+                    "note": "data_failed"})
     return rows
 
 
@@ -111,7 +162,7 @@ def get_margin_balance():
             "total_yi": round(total / 1e8, 2),
             "sh_yi": round(sh / 1e8, 2),
             "sz_yi": round(sz / 1e8, 2),
-            "note": "ok",
+            "note": "ok" if total else "off_day",
         })
 
     return result
@@ -178,7 +229,16 @@ def get_capital_summary():
 
 def _has_real_data(items):
     for item in items:
-        if item.get("note") != "data_failed" and item.get("note") != "暂无数据":
+        note = item.get("note", "")
+        if note not in ("data_failed", "off_day"):
+            return True
+    return False
+
+
+def _has_off_day_data(items):
+    """检查是否只有非交易日数据但存在最近交易日记录"""
+    for item in items:
+        if item.get("note") == "last_trading_day":
             return True
     return False
 

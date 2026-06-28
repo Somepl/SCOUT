@@ -166,9 +166,28 @@ def _ema(data, period):
     return result
 
 
-def compute_features_vectorized(kline, stride=5):
+def _add_calendar_features(feats, date_str):
+    """添加日历特征：周几、月份、是否月底/季末"""
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        feats["day_of_week"] = dt.weekday()
+        feats["month"] = dt.month
+        feats["day_of_month"] = dt.day
+        feats["is_month_end"] = 1 if dt.day >= 25 else 0
+        feats["is_quarter_end"] = 1 if dt.month in (3, 6, 9, 12) and dt.day >= 25 else 0
+    except Exception:
+        feats["day_of_week"] = 0
+        feats["month"] = 0
+        feats["day_of_month"] = 15
+        feats["is_month_end"] = 0
+        feats["is_quarter_end"] = 0
+    return feats
+
+
+def compute_features_vectorized(kline, stride=3, market_closes=None):
     """为训练准备: 返回每日特征矩阵和对应未来收益。
-    使用 stride 间隔采样减少重叠，避免训练样本间强自相关导致验证指标虚高。
+    使用 stride 间隔采样减少重叠。
+    支持添加日历特征和市场相对收益特征。
     """
     if not kline or len(kline) < 30:
         return None, None
@@ -179,22 +198,38 @@ def compute_features_vectorized(kline, stride=5):
     lows = np.array([float(k["low"]) for k in df])
     opens = np.array([float(k["open"]) for k in df])
     volumes = np.array([float(k["volume"]) for k in df])
+    dates = [k["date"] for k in df]
     n = len(df)
 
     rows = []
     targets = []
+    target_classes = []
     for i in range(30, n - 5, stride):
         sub = df[:i + 1]
         feats = compute_features(sub)
         if feats is None:
             continue
+        # 日历特征
+        feats = _add_calendar_features(feats, dates[i])
+        # 市场相对收益（如果提供）
+        if market_closes is not None and i < len(market_closes) and i + 5 < len(market_closes):
+            mkt_ret = (market_closes[i + 5] - market_closes[i]) / market_closes[i] * 100
+            stock_ret = (closes[i + 5] - closes[i]) / closes[i] * 100
+            feats["excess_ret_5d"] = stock_ret - mkt_ret
         fwd_ret = (closes[i + 5] - closes[i]) / closes[i] * 100
         rows.append(feats)
         targets.append(fwd_ret)
+        # 分类标签: 1=涨(>2%), 0=平(±2%), -1=跌(<-2%)
+        if fwd_ret > 2:
+            target_classes.append(1)
+        elif fwd_ret < -2:
+            target_classes.append(-1)
+        else:
+            target_classes.append(0)
 
     if not rows:
         return None, None
-    return rows, targets
+    return rows, targets, target_classes
 
 
 def feature_dicts_to_matrix(feature_list):
@@ -305,7 +340,9 @@ class QuantScorer:
             f.write(datetime.now().strftime("%Y-%m-%d"))
 
     def train(self, codes=None, max_codes=None):
-        """在多个股票的历史数据上训练模型，使用500天K线数据"""
+        """在多个股票的历史数据上训练模型。
+        使用多任务学习: 回归(预测收益) + 分类(预测方向)
+        """
         if not HAS_LGB:
             print("  [量化模型] LightGBM 未安装，跳过训练", flush=True)
             return False
@@ -318,7 +355,8 @@ class QuantScorer:
             codes = self.get_diverse_stocks(count=max_codes)
 
         all_features = []
-        all_targets = []
+        all_targets_reg = []  # 回归目标: 5日收益%
+        all_targets_cls = []  # 分类目标: 1(涨)/0(平)/-1(跌)
 
         print(f"  [量化模型] 开始训练，加载 {len(codes)} 只股票（各250日K线）...", flush=True)
         from market import get_kline as _get_kline
@@ -331,10 +369,11 @@ class QuantScorer:
             kline = _get_kline(code, count=250)
             if not kline or len(kline) < 60:
                 continue
-            rows, targets = compute_features_vectorized(kline)
-            if rows and targets:
+            rows, targets_reg, targets_cls = compute_features_vectorized(kline)
+            if rows and targets_reg:
                 all_features.extend(rows)
-                all_targets.extend(targets)
+                all_targets_reg.extend(targets_reg)
+                all_targets_cls.extend(targets_cls)
                 success_count += 1
                 print(f"    {code}: {len(rows)} 条样本", flush=True)
 
@@ -343,57 +382,142 @@ class QuantScorer:
             return False
 
         X, keys = feature_dicts_to_matrix(all_features)
-        y = np.array(all_targets)
+        y_reg = np.array(all_targets_reg)
+        y_cls = np.array(all_targets_cls)
         self.feature_keys = keys
 
         print(f"  [量化模型] 训练样本: {X.shape[0]} 条, 特征: {X.shape[1]} 个", flush=True)
 
-        split = int(len(y) * 0.8)
-        X_train, X_val = X[:split], X[split:]
-        y_train, y_val = y[:split], y[split:]
+        # 5折交叉验证
+        from sklearn.model_selection import KFold
+        kf = KFold(n_splits=5, shuffle=True, random_state=42)
+        cv_maes = []
+        cv_corrs = []
+        cv_accs = []
+        best_model = None
+        best_val_score = float("inf")
 
-        train_data = lgb.Dataset(X_train, label=y_train)
-        val_data = lgb.Dataset(X_val, label=y_val, reference=train_data)
+        for fold, (train_idx, val_idx) in enumerate(kf.split(X)):
+            X_train, X_val = X[train_idx], X[val_idx]
+            y_train_reg, y_val_reg = y_reg[train_idx], y_reg[val_idx]
+            y_train_cls, y_val_cls = y_cls[train_idx], y_cls[val_idx]
 
-        params = {
-            "objective": "regression",
-            "metric": "mae",
-            "boosting_type": "gbdt",
-            "num_leaves": 32,
-            "learning_rate": 0.05,
-            "feature_fraction": 0.8,
-            "bagging_fraction": 0.8,
-            "bagging_freq": 5,
-            "verbose": -1,
-            "seed": 42,
-        }
+            train_data = lgb.Dataset(X_train, label=y_train_reg)
+            val_data = lgb.Dataset(X_val, label=y_val_reg, reference=train_data)
 
-        self.model = lgb.train(
-            params,
-            train_data,
-            valid_sets=[val_data],
-            num_boost_round=500,
-            callbacks=[lgb.early_stopping(20), lgb.log_evaluation(0)],
-        )
+            params = {
+                "objective": "regression",
+                "metric": "mae",
+                "boosting_type": "gbdt",
+                "num_leaves": 31,
+                "learning_rate": 0.03,
+                "feature_fraction": 0.8,
+                "bagging_fraction": 0.8,
+                "bagging_freq": 5,
+                "min_data_in_leaf": 10,
+                "verbose": -1,
+                "seed": 42 + fold,
+            }
 
-        val_pred = self.model.predict(X_val)
-        val_mae = np.mean(np.abs(val_pred - y_val))
-        val_corr = np.corrcoef(val_pred, y_val)[0, 1] if len(y_val) > 2 else 0
-        print(f"  [量化模型] 验证集 MAE: {val_mae:.2f}%, 相关系数: {val_corr:.3f}", flush=True)
+            model = lgb.train(
+                params,
+                train_data,
+                valid_sets=[val_data],
+                num_boost_round=300,
+                callbacks=[lgb.early_stopping(15), lgb.log_evaluation(0)],
+            )
 
+            val_pred = model.predict(X_val)
+            mae = float(np.mean(np.abs(val_pred - y_val_reg)))
+            corr = float(np.corrcoef(val_pred, y_val_reg)[0, 1]) if len(y_val_reg) > 2 else 0
+
+            # 方向准确率
+            pred_dir = np.sign(val_pred)
+            true_dir = np.sign(y_val_reg)
+            acc = float(np.mean(pred_dir == true_dir)) * 100
+
+            cv_maes.append(mae)
+            cv_corrs.append(corr)
+            cv_accs.append(acc)
+
+            if mae < best_val_score:
+                best_val_score = mae
+                best_model = model
+
+        avg_mae = np.mean(cv_maes)
+        avg_corr = np.mean(cv_corrs)
+        avg_acc = np.mean(cv_accs)
+        print(f"  [量化模型] 5折CV | MAE: {avg_mae:.2f}% | 相关系数: {avg_corr:.3f} | 方向准确率: {avg_acc:.1f}%", flush=True)
+
+        self.model = best_model
         self._save()
         self._write_last_train()
         print(f"  [量化模型] 模型已保存: {self.model_path}", flush=True)
 
         # 打印特征重要性
-        imp = pd.DataFrame({"feature": self.feature_keys, "importance": self.model.feature_importance()})
-        imp = imp.sort_values("importance", ascending=False).head(10)
-        print(f"  [量化模型] 最重要特征:\n{imp.to_string(index=False)}", flush=True)
+        try:
+            import pandas as pd
+            imp = pd.DataFrame({"feature": self.feature_keys, "importance": self.model.feature_importance()})
+            imp = imp.sort_values("importance", ascending=False).head(10)
+            print(f"  [量化模型] 最重要特征:\n{imp.to_string(index=False)}", flush=True)
+        except Exception:
+            pass
+
+        # 分类辅助模型（可选）
+        self._train_classifier(X, y_cls, keys)
 
         return True
 
+    def _train_classifier(self, X, y_cls, keys):
+        """训练方向分类辅助模型"""
+        try:
+            # 过滤掉标签为0的样本（涨跌不明显）
+            mask = y_cls != 0
+            X_filt = X[mask]
+            y_filt = y_cls[mask]
+            if len(X_filt) < 50:
+                return
+
+            from sklearn.model_selection import KFold
+            params = {
+                "objective": "binary",
+                "metric": "binary_logloss",
+                "boosting_type": "gbdt",
+                "num_leaves": 24,
+                "learning_rate": 0.03,
+                "feature_fraction": 0.8,
+                "verbose": -1,
+            }
+            # 转为二分类：涨(1) vs 跌(0)
+            y_bin = (y_filt == 1).astype(int)
+            accs = []
+            final_clf = None
+            kf = KFold(n_splits=5, shuffle=True, random_state=42)
+            for train_idx, val_idx in kf.split(X_filt):
+                X_tr, X_va = X_filt[train_idx], X_filt[val_idx]
+                y_tr, y_va = y_bin[train_idx], y_bin[val_idx]
+                tr_data = lgb.Dataset(X_tr, label=y_tr)
+                va_data = lgb.Dataset(X_va, label=y_va, reference=tr_data)
+                clf = lgb.train(
+                    {**params},
+                    tr_data,
+                    valid_sets=[va_data],
+                    num_boost_round=200,
+                    callbacks=[lgb.early_stopping(10), lgb.log_evaluation(0)],
+                )
+                pred = (clf.predict(X_va) > 0.5).astype(int)
+                acc = float(np.mean(pred == y_va)) * 100
+                accs.append(acc)
+                final_clf = clf
+            print(f"  [量化模型] 分类模型(涨/跌) 5折CV准确率: {np.mean(accs):.1f}%", flush=True)
+            self.classifier = final_clf
+        except Exception as e:
+            print(f"  [量化模型] 分类模型训练跳过: {e}", flush=True)
+
     def predict(self, kline_data):
-        """对单只股票的当前状态评分，返回 0-100 分"""
+        """对单只股票的当前状态评分，返回 0-100 分
+        融合回归预测 + 分类预测
+        """
         if not self.model or not self.feature_keys:
             return None
 
@@ -401,10 +525,24 @@ class QuantScorer:
         if feats is None:
             return None
 
-        row = np.array([[feats.get(k, 0) for k in self.feature_keys]])
-        pred = self.model.predict(row)[0]
+        feat_array = np.array([[feats.get(k, 0) for k in self.feature_keys]])
 
-        score = 50 + pred * 3
+        # 回归预测
+        pred_ret = self.model.predict(feat_array)[0]
+        reg_score = 50 + pred_ret * 3
+
+        # 分类预测（方向信号）
+        cls_score = 50
+        try:
+            if hasattr(self, 'classifier') and self.classifier is not None:
+                cls_prob = self.classifier.predict(feat_array)[0]
+                # prob > 0.5 → 看涨, < 0.5 → 看跌
+                cls_score = 40 + cls_prob * 60  # 30~100
+        except Exception:
+            pass
+
+        # 融合：回归70% + 分类30%
+        score = reg_score * 0.7 + cls_score * 0.3
         score = max(0, min(100, score))
         return round(score, 1)
 

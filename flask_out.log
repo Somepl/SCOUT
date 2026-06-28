@@ -1,0 +1,13 @@
+  SCOUT Web Dashboard 启动
+  访问地址: http://127.0.0.1:5000
+  按 Ctrl+C 停止
+ * Serving Flask app 'app'
+ * Debug mode: on
+  SCOUT Web Dashboard 启动
+  访问地址: http://127.0.0.1:5000
+  按 Ctrl+C 停止
+  [资金面] 获取北向资金流向...
+    北向资金: 0.00亿 数据延迟
+  [资金面] 获取融资融券余额...
+    融资融券余额: 0亿
+  [资金面] 获取沪深港通十大成交...

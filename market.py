@@ -128,7 +128,12 @@ class StockTrendAnalyzer:
         )
 
         model_score = _get_quant_score(kline, code, score)
-        blended_score = int(round(score * 0.5 + model_score * 0.5))
+        # 检测量化模型是否输出有效差异化信号:
+        # 模型分在48-52区间说明模型仅预测均值，无区分能力 → 使用纯规则评分
+        if 48 <= model_score <= 52:
+            blended_score = int(round(score))
+        else:
+            blended_score = int(round(score * 0.5 + model_score * 0.5))
 
         if blended_score >= 75 and trend in ("强势多头", "多头排列"):
             final_signal = "强烈买入"
@@ -325,9 +330,9 @@ class StockTrendAnalyzer:
         reasons = []
         risks = []
 
-        trend_scores = {"强势多头": 30, "多头排列": 26, "弱势多头": 18,
-                        "盘整": 12, "弱势空头": 8, "空头排列": 4, "强势空头": 0}
-        score += trend_scores.get(trend, 12)
+        trend_scores = {"强势多头": 35, "多头排列": 28, "弱势多头": 20,
+                        "盘整": 10, "弱势空头": 6, "空头排列": 3, "强势空头": 0}
+        score += trend_scores.get(trend, 10)
         if trend in ("强势多头", "多头排列"):
             reasons.append(f"✅ {trend}，顺势做多")
         elif trend in ("空头排列", "强势空头"):
@@ -370,15 +375,15 @@ class StockTrendAnalyzer:
             score += 5
             reasons.append("✅ MA10支撑有效")
 
-        macd_scores = {"零轴上金叉": 15, "金叉": 12, "上穿零轴": 10,
-                       "多头": 8, "空头": 2, "下穿零轴": 0, "死叉": 0}
+        macd_scores = {"零轴上金叉": 18, "金叉": 14, "上穿零轴": 12,
+                       "多头": 10, "中性": 5, "空头": 0, "下穿零轴": 0, "死叉": 0}
         score += macd_scores.get(macd_info["status"], 5)
         if macd_info["status"] in ("零轴上金叉", "金叉"):
             reasons.append(f"✅ {macd_info['signal']}")
         elif macd_info["status"] in ("死叉", "下穿零轴"):
             risks.append(f"⚠️ {macd_info['signal']}")
 
-        rsi_scores = {"超卖": 10, "强势买入": 8, "中性": 5, "弱势": 3, "超买": 0}
+        rsi_scores = {"超卖": 12, "强势买入": 10, "中性": 5, "弱势": 2, "超买": 0}
         score += rsi_scores.get(rsi_info["status"], 5)
         if rsi_info["status"] in ("超卖", "强势买入"):
             reasons.append(f"✅ {rsi_info['signal']}")

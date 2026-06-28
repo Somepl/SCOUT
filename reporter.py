@@ -236,7 +236,16 @@ def build_stock_report(stock_results):
         emoji = _action_emoji(action)
         score = m.get("score", 0) or 0
 
+        # 确信度（来自 strategist._pick_rank 集成）
+        conv = r.get("conviction", {})
+        conv_icon = {"高": "🟢🟢🟢", "中": "🟢🟡⚪", "低": "⚪⚪🔴"}.get(conv.get("level", ""), "")
+        conv_line = f"  {conv_icon} 确信度: {conv.get('level', 'N/A')}" if conv and conv.get('level') else ""
+
         lines.append(f"  {emoji} {m['name']}（{m['code']}）{rating}")
+        if conv_line:
+            lines.append(conv_line)
+            sig_detail = " + ".join([s['value'] for s in conv.get('signals', [])])
+            lines.append(f"    信号: {sig_detail}")
         lines.append(SUB_SEP)
         lines.append(f"    当前价: {m['price']:>8.2f}  |  涨跌: {m.get('change_pct', 0):>+7.2f}%")
         lines.append(f"    信号: {signal}  |  综合评分: {score}/100")

@@ -1,6 +1,133 @@
 SEP = "=" * 60
 SUB_SEP = "-" * 60
 
+# ── 多信号确信度系统 ──
+
+def _sector_news_sentiment(stock_sectors, news_results):
+    """计算该股票所在板块的新闻情绪得分
+    返回: 1=偏多, 0=中性, -1=偏空, None=无相关新闻
+    """
+    if not stock_sectors or not news_results:
+        return None
+    
+    total_score = 0
+    match_count = 0
+    for r in news_results:
+        analysis = r.get("analysis", {})
+        sectors = analysis.get("affected_sectors", [])
+        # 检查是否有交集
+        if not any(s in stock_sectors for s in sectors):
+            continue
+        sentiment = analysis.get("market_sentiment", "中性")
+        confidence = analysis.get("confidence", "中")
+        # 置信度权重
+        conf_w = {"高": 3, "中": 2, "低": 1}.get(confidence, 1)
+        # 情绪分
+        sent_w = {"利好": 1, "利空": -1, "中性": 0}.get(sentiment, 0)
+        total_score += sent_w * conf_w
+        match_count += conf_w
+    
+    if match_count == 0:
+        return None
+    avg = total_score / match_count
+    if avg > 0.3:
+        return 1   # 偏多
+    elif avg < -0.3:
+        return -1  # 偏空
+    return 0         # 中性
+
+
+def calc_conviction(stock_market_data, news_results, capital_data):
+    """多信号确信度评估
+    结合技术面、板块新闻情绪、资金面三个独立信号源
+    
+    Args:
+        stock_market_data: dict from market.py StockTrendAnalyzer.analyze()
+        news_results: list of news analysis results
+        capital_data: dict from capital.get_capital_summary()
+    
+    Returns:
+        dict with:
+            level: str 高/中/低
+            score: int 0-100 确信度分数
+            signals: list of individual signal dicts
+            label: str 简要说明
+    """
+    signals = []
+    
+    # 1. 技术面信号
+    tech_score = stock_market_data.get('score', 50) or 50
+    if tech_score >= 60:
+        signals.append({"name": "技术面", "value": "看多", "detail": f"评分{tech_score}", "score": 1})
+    elif tech_score >= 45:
+        signals.append({"name": "技术面", "value": "中性", "detail": f"评分{tech_score}", "score": 0})
+    else:
+        signals.append({"name": "技术面", "value": "看空", "detail": f"评分{tech_score}", "score": -1})
+    
+    # 2. 板块新闻情绪
+    stock_sectors = stock_market_data.get('source_sectors', [])
+    news_sent = _sector_news_sentiment(stock_sectors, news_results)
+    if news_sent == 1:
+        signals.append({"name": "新闻面(板块)", "value": "偏多", "detail": "板块利好新闻居多", "score": 1})
+    elif news_sent == -1:
+        signals.append({"name": "新闻面(板块)", "value": "偏空", "detail": "板块利空新闻居多", "score": -1})
+    else:
+        signals.append({"name": "新闻面(板块)", "value": "中性", "detail": "板块新闻情绪中性或无直接相关", "score": 0})
+    
+    # 3. 资金面信号
+    if capital_data:
+        try:
+            from capital import calc_capital_light
+            cap_light = calc_capital_light(capital_data)
+            cap_score = cap_light.get('score', 50) if isinstance(cap_light, dict) else 50
+        except Exception:
+            cap_score = 50
+        if cap_score >= 65:
+            signals.append({"name": "资金面", "value": "偏多", "detail": f"北向资金净流入", "score": 1})
+        elif cap_score <= 35:
+            signals.append({"name": "资金面", "value": "偏空", "detail": f"北向资金净流出", "score": -1})
+        else:
+            signals.append({"name": "资金面", "value": "中性", "detail": "资金面无明显方向", "score": 0})
+    else:
+        signals.append({"name": "资金面", "value": "未知", "detail": "数据暂不可用", "score": 0})
+    
+    # 综合确信度
+    positive = sum(1 for s in signals if s['score'] > 0)
+    negative = sum(1 for s in signals if s['score'] < 0)
+    total_active = sum(1 for s in signals if s['score'] != 0)
+    
+    # 确信度评分 (0-100)
+    net = positive - negative
+    total = len(signals)
+    conv_score = int(50 + (net / total) * 50)
+    conv_score = max(0, min(100, conv_score))
+    
+    # 确信度等级
+    if positive >= 2 and negative == 0:
+        level = "高"
+        label = "多信号一致看多"
+    elif positive >= 2 and negative > 0:
+        level = "中"
+        label = "多数偏多但有分歧"
+    elif negative >= 2:
+        level = "低"
+        label = "多数信号偏空"
+    elif positive == 0 and negative == 0:
+        level = "低"
+        label = "信号不明朗"
+    else:
+        level = "中"
+        label = "信号存在分歧"
+    
+    return {
+        "level": level,
+        "score": conv_score,
+        "signals": signals,
+        "positive_count": positive,
+        "negative_count": negative,
+        "label": label,
+    }
+
 
 def _normalize_alloc(n):
     allocs = [0.35, 0.25, 0.20, 0.12, 0.08]
@@ -27,7 +154,7 @@ def _sentiment_score(news_results):
     return (bullish - bearish) / (bullish + bearish) * 100
 
 
-def _pick_rank(stock_results, news_results):
+def _pick_rank(stock_results, news_results, capital_data=None):
     scored = []
     for r in stock_results:
         m = r.get("market", {})
@@ -56,7 +183,17 @@ def _pick_rank(stock_results, news_results):
         if vol_status in ("缩量回调", "放量上涨"):
             volume_bonus = 5
 
-        base_rank = score + volatility_penalty + volume_bonus + (trend_strength * 0.1)
+        # 确信度加成
+        conviction = calc_conviction(m, news_results, capital_data)
+        conv_bonus = 0
+        if conviction["level"] == "高":
+            conv_bonus = 10
+        elif conviction["level"] == "中" and conviction["positive_count"] > conviction["negative_count"]:
+            conv_bonus = 5
+        elif conviction["negative_count"] >= 2:
+            conv_bonus = -15  # 多数信号看空，强烈不推荐
+
+        base_rank = score + volatility_penalty + volume_bonus + (trend_strength * 0.1) + conv_bonus
 
         final_score = max(0, min(100, base_rank))
 
@@ -98,10 +235,16 @@ def _pick_rank(stock_results, news_results):
             "trend": m.get("trend", ""),
             "volume_status": vol_status,
             "ma_alignment": m.get("ma_alignment", ""),
+            "conviction": conviction,
         })
 
     scored.sort(key=lambda x: x["rank_score"], reverse=True)
     return scored
+
+
+def _conviction_icon(level):
+    icons = {"高": "🟢🟢🟢", "中": "🟢🟡⚪", "低": "⚪⚪🔴"}
+    return icons.get(level, "⚪⚪⚪")
 
 
 CAPITAL_ALLOCATION = _normalize_alloc(5)
@@ -141,7 +284,13 @@ def build_picks_report(picks, news_results):
 
         lines.append(SUB_SEP)
         sector_tag = f"[{'/'.join(p['source_sectors'][:3])}]" if p.get('source_sectors') else ""
+        conv = p.get('conviction', {})
+        conv_label = f"{_conviction_icon(conv.get('level', ''))} 确信度: {conv.get('level', 'N/A')}" if conv else ""
         lines.append(f"  #{i+1} {p['name']}（{p['code']}）{p['rating']}  {sector_tag}")
+        if conv_label:
+            lines.append(f"    {conv_label}")
+            sig_detail = " + ".join([s['value'] for s in conv.get('signals', [])])
+            lines.append(f"    信号: {sig_detail}")
         lines.append(f"    当前价: {p['price']:.2f}  |  涨跌: {p['change_pct']:+.2f}%  |  评分: {p['score']}/100  优先级: {alloc_pct}仓位")
         lines.append(f"    策略: {p['action']}  |  趋势: {p['trend']}  |  量能: {p['volume_status']}")
         lines.append("")
@@ -219,7 +368,9 @@ def build_wechat_picks(picks, news_results):
     for i, p in enumerate(picks):
         alloc = CAPITAL_ALLOCATION[i] if i < len(CAPITAL_ALLOCATION) else 0.0
         sector_tag = f"[{'/'.join(p['source_sectors'][:2])}]" if p.get('source_sectors') else ""
-        lines.append(f"{'🟢' if i == 0 else '🟢'}  #{i+1} {p['name']}（{p['code']}）{sector_tag}")
+        conv = p.get('conviction', {})
+        conv_tag = f" 确信度:{conv.get('level','?')}" if conv else ""
+        lines.append(f"{'🟢' if i == 0 else '🟢'}  #{i+1} {p['name']}（{p['code']}）{sector_tag}{conv_tag}")
         lines.append(f"  买入区间: {p['ideal_entry']}")
         lines.append(f"  止损: {p['stop_loss']}")
         tp_parts = []

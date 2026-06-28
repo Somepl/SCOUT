@@ -91,17 +91,24 @@ def main():
             print("  AI生成决策仪表盘...", flush=True)
             stock_results = analyze_stocks_batch(stock_data_list)
 
-            stock_report = build_stock_report(stock_results)
-            report_parts.append(stock_report)
-            print_report(stock_report)
-
     print("【第8步】资金面数据采集...", flush=True)
     capital_data = get_capital_summary()
     capital_report = build_capital_report(capital_data)
     report_parts.append(capital_report)
     print_report(capital_report)
 
-    picks = _pick_rank(stock_results or [], results)
+    # 在资金面数据到位后，为每只个股注入多信号确信度
+    if stock_results:
+        from strategist import calc_conviction
+        for sr in stock_results:
+            m = sr.get("market", {})
+            conv = calc_conviction(m, results, capital_data)
+            sr["conviction"] = conv
+        stock_report = build_stock_report(stock_results)
+        report_parts.append(stock_report)
+        print_report(stock_report)
+
+    picks = _pick_rank(stock_results or [], results, capital_data=capital_data)
     picks_report = build_picks_report(picks, results)
     report_parts.append(picks_report)
     print_report(picks_report)

@@ -9,32 +9,37 @@ SCOUT 配置文件
 
 import os
 
-AI_API_KEY = os.environ.get("SCOUT_AI_API_KEY") or "sk-xsljgmciqbwrtgkrrslmzvmllbkbtjtbwrudwqpnshykniex"
-AI_BASE_URL = "https://api.siliconflow.cn/v1"
-AI_MODEL = "Qwen/Qwen2.5-7B-Instruct"
+AI_API_KEY = os.environ.get("SCOUT_AI_API_KEY") or "sk-你的DeepSeek Key"
+AI_BASE_URL = "https://api.deepseek.com/v1"
+AI_MODEL = "deepseek-v4-flash"
 
 """
 切换示例（取消下面对应组的注释即可）：
 
---- 硅基流动（免费，推荐）---
+--- DeepSeek（当前配置，V4 Flash 能力强，500万免费额度）---
+AI_API_KEY = "sk-你的key"
+AI_MODEL = "deepseek-v4-flash"
+AI_BASE_URL = "https://api.deepseek.com/v1"
+
+--- 智谱 GLM-4-Flash（永久免费无限量，能力弱于 DeepSeek）---
+AI_API_KEY = "你的智谱API Key"
+AI_MODEL = "glm-4-flash"
+AI_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
+
+--- 阿里云百炼 Qwen（新用户送7000万token）---
+AI_API_KEY = "你的DashScope Key"
+AI_MODEL = "qwen3-plus"
+AI_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+--- 硅基流动（原配置，余额不足需充值）---
 AI_API_KEY = "sk-你的key"
 AI_MODEL = "Qwen/Qwen2.5-7B-Instruct"
 AI_BASE_URL = "https://api.siliconflow.cn/v1"
-
---- DeepSeek（约 ¥1/月）---
-AI_API_KEY = "sk-你的key"
-AI_MODEL = "deepseek-chat"
-AI_BASE_URL = "https://api.deepseek.com/v1"
 
 --- OpenAI（需科学上网）---
 AI_API_KEY = "sk-你的key"
 AI_MODEL = "gpt-4o-mini"
 AI_BASE_URL = "https://api.openai.com/v1"
-
---- 阿里通义千问 ---
-AI_API_KEY = "sk-你的key"
-AI_MODEL = "qwen-turbo"
-AI_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 """
 
 NEWS_SOURCES = [

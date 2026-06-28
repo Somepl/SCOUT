@@ -65,6 +65,36 @@ class ScoutStorage:
                 analysis_json TEXT,
                 created_time TEXT DEFAULT (datetime('now','localtime'))
             );
+            CREATE TABLE IF NOT EXISTS pick_registry (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT,
+                name TEXT,
+                entry_price REAL,
+                conviction_level TEXT,
+                conviction_score INTEGER,
+                tech_score INTEGER,
+                rank_score REAL,
+                source_sectors TEXT,
+                action TEXT,
+                signal TEXT,
+                stop_loss_price REAL,
+                report_date TEXT,
+                status TEXT DEFAULT 'active',
+                created_time TEXT DEFAULT (datetime('now','localtime'))
+            );
+            CREATE TABLE IF NOT EXISTS pick_evaluations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pick_id INTEGER,
+                holding_days INTEGER,
+                exit_price REAL,
+                exit_date TEXT,
+                return_pct REAL,
+                max_drawdown REAL,
+                hit_stop_loss INTEGER DEFAULT 0,
+                conviction_level TEXT,
+                checked_date TEXT DEFAULT (date('now','localtime')),
+                FOREIGN KEY (pick_id) REFERENCES pick_registry(id)
+            );
         """)
         conn.commit()
         conn.close()
@@ -194,6 +224,183 @@ class ScoutStorage:
         conn.commit()
         conn.close()
         return saved
+
+    def save_pick(self, pick_data):
+        """记录一条狙击推荐到 pick_registry"""
+        try:
+            stop_loss_price = 0.0
+            sl_raw = pick_data.get("stop_loss", "")
+            if sl_raw:
+                try:
+                    stop_loss_price = float(sl_raw.replace(",", "").replace("元", "").strip())
+                except (ValueError, AttributeError):
+                    stop_loss_price = 0.0
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            c.execute(
+                """INSERT INTO pick_registry
+                   (code, name, entry_price, conviction_level, conviction_score,
+                    tech_score, rank_score, source_sectors, action, signal,
+                    stop_loss_price, report_date)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    pick_data.get("code", ""),
+                    pick_data.get("name", ""),
+                    pick_data.get("price", 0) or 0,
+                    pick_data.get("conviction", {}).get("level", ""),
+                    pick_data.get("conviction", {}).get("score", 0) or 0,
+                    pick_data.get("score", 0) or 0,
+                    pick_data.get("rank_score", 0) or 0,
+                    ",".join(pick_data.get("source_sectors", [])),
+                    pick_data.get("action", ""),
+                    pick_data.get("signal", ""),
+                    stop_loss_price,
+                    today_str(),
+                )
+            )
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"  [推荐记录失败] {pick_data.get('code','')} - {e}", flush=True)
+            return False
+
+    def save_picks_batch(self, picks):
+        """批量保存推荐记录"""
+        saved = 0
+        for p in picks:
+            if self.save_pick(p):
+                saved += 1
+        return saved
+
+    def get_pending_evaluations(self, min_holding=5, max_days_old=90):
+        """获取待评估的活跃推荐（已过 min_holding 天但尚未评估）"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute(
+            """SELECT pr.id, pr.code, pr.name, pr.entry_price,
+                      pr.report_date, pr.conviction_level,
+                      pr.stop_loss_price
+               FROM pick_registry pr
+               WHERE pr.status = 'active'
+                 AND pr.report_date <= date('now', ?)
+                 AND pr.report_date >= date('now', ?)
+                 AND NOT EXISTS (
+                     SELECT 1 FROM pick_evaluations pe
+                     WHERE pe.pick_id = pr.id AND pe.holding_days = ?
+                 )
+               ORDER BY pr.report_date ASC""",
+            (f"-{min_holding} days", f"-{max_days_old} days", min_holding)
+        )
+        rows = c.fetchall()
+        conn.close()
+        return [
+            {
+                "id": r[0], "code": r[1], "name": r[2],
+                "entry_price": r[3], "report_date": r[4],
+                "conviction_level": r[5] or "中",
+                "stop_loss_price": r[6] or 0,
+            }
+            for r in rows
+        ]
+
+    def save_pick_evaluation(self, pick_id, holding_days, exit_price, exit_date,
+                              return_pct, max_drawdown, hit_stop_loss, conviction_level):
+        """保存一条评估结果"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            c.execute(
+                """INSERT INTO pick_evaluations
+                   (pick_id, holding_days, exit_price, exit_date,
+                    return_pct, max_drawdown, hit_stop_loss, conviction_level)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (pick_id, holding_days, exit_price, exit_date,
+                 return_pct, max_drawdown, 1 if hit_stop_loss else 0, conviction_level)
+            )
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"  [评估记录失败] pick#{pick_id} - {e}", flush=True)
+            return False
+
+    def get_pick_summary(self, since_days=30):
+        """获取指定天数内的推荐汇总统计"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute(
+            """SELECT
+                   COUNT(*) as total_picks,
+                   COUNT(CASE WHEN pe.id IS NOT NULL THEN 1 END) as evaluated,
+                   AVG(CASE WHEN pe.id IS NOT NULL THEN pe.return_pct END) as avg_return,
+                   SUM(CASE WHEN pe.return_pct > 0 THEN 1 ELSE 0 END) as wins,
+                   COUNT(pe.id) as total_eval,
+                   AVG(CASE WHEN pe.return_pct > 0 THEN pe.return_pct END) as avg_win,
+                   AVG(CASE WHEN pe.return_pct < 0 THEN pe.return_pct END) as avg_loss,
+                   MAX(pe.return_pct) as best_return,
+                   MIN(pe.return_pct) as worst_return
+               FROM pick_registry pr
+               LEFT JOIN pick_evaluations pe ON pe.pick_id = pr.id
+               WHERE pr.report_date >= date('now', ?)
+            """,
+            (f"-{since_days} days",)
+        )
+        row = c.fetchone()
+        conn.close()
+        if not row or not row[0]:
+            return None
+        wins = row[4] or 0
+        total = row[3] or 0
+        return {
+            "total_picks": row[0],
+            "evaluated": row[1] or 0,
+            "avg_return": round(row[2] or 0, 2),
+            "win_rate": round(wins / total * 100, 1) if total > 0 else 0,
+            "wins": wins,
+            "total_eval": total,
+            "avg_win": round(row[5] or 0, 2),
+            "avg_loss": round(row[6] or 0, 2),
+            "best_return": round(row[7] or 0, 2),
+            "worst_return": round(row[8] or 0, 2),
+        }
+
+    def get_pick_summary_by_conviction(self, since_days=30):
+        """按确信度分组统计表现"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute(
+            """SELECT pr.conviction_level,
+                      COUNT(DISTINCT pr.id) as picks,
+                      COUNT(pe.id) as evals,
+                      AVG(pe.return_pct) as avg_ret,
+                      SUM(CASE WHEN pe.return_pct > 0 THEN 1 ELSE 0 END) as wins,
+                      COUNT(pe.id) as total
+               FROM pick_registry pr
+               JOIN pick_evaluations pe ON pe.pick_id = pr.id
+               WHERE pr.report_date >= date('now', ?)
+               GROUP BY pr.conviction_level
+               ORDER BY pr.conviction_level DESC
+            """,
+            (f"-{since_days} days",)
+        )
+        rows = c.fetchall()
+        conn.close()
+        result = []
+        for r in rows:
+            level, picks, evals, avg_ret, wins, total = r
+            wins = wins or 0
+            total = total or 0
+            result.append({
+                "level": level,
+                "picks": picks,
+                "evaluations": evals,
+                "avg_return": round(avg_ret or 0, 2),
+                "win_rate": round(wins / total * 100, 1) if total > 0 else 0,
+                "wins": wins,
+                "total": total,
+            })
+        return result
 
     def get_buy_signals(self, days=90):
         conn = sqlite3.connect(self.db_path)

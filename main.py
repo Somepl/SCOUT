@@ -17,6 +17,7 @@ from capital import get_capital_summary, calc_capital_light
 from utils import deduplicate, now_str
 from notifier import push_wechat
 from backtest import run_backtest, print_backtest_report
+from tracker import record_picks, evaluate_picks, generate_report
 
 
 def main():
@@ -113,6 +114,9 @@ def main():
     report_parts.append(picks_report)
     print_report(picks_report)
 
+    # 记录本次推荐到追踪数据库
+    record_picks(picks, storage=storage)
+
     ml = calc_market_light(results, stock_results)
     cl = calc_capital_light(capital_data)
     print(f"\n【市场光信号】{ml['light']}  {ml['label']}", flush=True)
@@ -142,6 +146,10 @@ def main():
     report_parts.append(bt_report)
     print(flush=True)
 
+    print("【第10.1步】推荐追踪评估...", flush=True)
+    evaluate_picks(storage=storage, holding_periods=[5, 10, 20, 30], days_back=90)
+    print(flush=True)
+
     if AUTO_REVIEW_ENABLED:
         print("【第10.5步】自动复盘追踪...", flush=True)
         try:
@@ -158,6 +166,24 @@ def main():
         except Exception as e:
             print(f"  [自动复盘失败] {e}", flush=True)
             print(flush=True)
+
+    # 每日推荐追踪摘要
+    try:
+        summary = storage.get_pick_summary(since_days=90)
+        if summary and summary["total_eval"] > 0:
+            print(f"  [推荐追踪] 累计{summary['total_eval']}次评估 | "
+                  f"胜率{summary['win_rate']}% | "
+                  f"平均收益{summary['avg_return']:+.2f}%", flush=True)
+            # 每月1号和15号输出完整报告
+            day_of_month = int(now_str()[8:10])
+            if day_of_month in (1, 15):
+                print("\n  [月度业绩报告]", flush=True)
+                monthly_report = generate_report(storage=storage, months=1)
+                for line in monthly_report.split("\n"):
+                    print(f"  {line}", flush=True)
+    except Exception as e:
+        print(f"  [追踪摘要失败] {e}", flush=True)
+    print(flush=True)
 
     print("【第11步】推送通知...", flush=True)
     wechat_summary = build_wechat_summary(results, stock_results, capital_data)

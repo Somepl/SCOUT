@@ -83,6 +83,18 @@ class ScoutStorage:
                 status TEXT DEFAULT 'active',
                 created_time TEXT DEFAULT (datetime('now','localtime'))
             );
+            CREATE TABLE IF NOT EXISTS model_training_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                train_date TEXT,
+                num_stocks INTEGER,
+                num_samples INTEGER,
+                num_features INTEGER,
+                cv_mae REAL,
+                cv_correlation REAL,
+                cv_direction_accuracy REAL,
+                classifier_accuracy REAL,
+                created_time TEXT DEFAULT (datetime('now','localtime'))
+            );
             CREATE TABLE IF NOT EXISTS pick_evaluations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 pick_id INTEGER,
@@ -365,6 +377,61 @@ class ScoutStorage:
             "best_return": round(row[7] or 0, 2),
             "worst_return": round(row[8] or 0, 2),
         }
+
+    def save_training_log(self, metrics):
+        """保存量化模型训练日志"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            c.execute(
+                """INSERT INTO model_training_log
+                   (train_date, num_stocks, num_samples, num_features,
+                    cv_mae, cv_correlation, cv_direction_accuracy, classifier_accuracy)
+                   VALUES (date('now','localtime'),?,?,?,?,?,?,?)""",
+                (
+                    metrics.get("num_stocks", 0),
+                    metrics.get("num_samples", 0),
+                    metrics.get("num_features", 0),
+                    metrics.get("cv_mae", 0),
+                    metrics.get("cv_correlation", 0),
+                    metrics.get("cv_direction_accuracy", 0),
+                    metrics.get("classifier_accuracy") or 0,
+                )
+            )
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"  [训练日志保存失败] {e}", flush=True)
+            return False
+
+    def get_training_logs(self, limit=10):
+        """获取最近的训练日志"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute(
+            """SELECT train_date, num_stocks, num_samples, num_features,
+                      cv_mae, cv_correlation, cv_direction_accuracy, classifier_accuracy
+               FROM model_training_log
+               ORDER BY id DESC
+               LIMIT ?""",
+            (limit,)
+        )
+        rows = c.fetchall()
+        conn.close()
+        return [
+            {
+                "date": r[0],
+                "num_stocks": r[1],
+                "num_samples": r[2],
+                "num_features": r[3],
+                "cv_mae": r[4],
+                "cv_correlation": r[5],
+                "cv_direction_accuracy": r[6],
+                "classifier_accuracy": r[7],
+            }
+            for r in rows
+        ]
 
     def get_pick_summary_by_conviction(self, since_days=30):
         """按确信度分组统计表现"""
@@ -692,6 +759,65 @@ class ScoutStorage:
             if self._is_valid_code(code) and code not in valid_codes:
                 valid_codes.append(code)
         return valid_codes
+
+    def get_reviews(self, days=90, limit=50):
+        """获取自动复盘结果（同时处理新闻分析和个股仪表盘），用于 Web 仪表盘显示"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        # 新闻分析复盘（analysis_id > 0）
+        c.execute(
+            """SELECT t.actual_outcome, t.outcome_detail, t.reviewed_at,
+                      a.report_date, m.title, a.event_type, a.market_sentiment,
+                      'news' as review_type
+               FROM tracking t
+               JOIN analysis a ON a.id = t.analysis_id
+               JOIN messages m ON m.id = a.message_id
+               WHERE t.analysis_id > 0
+                 AND a.report_date >= date('now', ?)
+               ORDER BY t.reviewed_at DESC
+               LIMIT ?""",
+            (f"-{days} days", limit)
+        )
+        news_rows = c.fetchall()
+
+        # 个股仪表盘复盘（analysis_id < 0，通过 outcome_detail 判断 stock: 前缀）
+        c.execute(
+            """SELECT t.actual_outcome, t.outcome_detail, t.reviewed_at,
+                      '' as report_date, '' as title, '' as event_type, '' as sentiment,
+                      'stock' as review_type
+               FROM tracking t
+               WHERE t.analysis_id < 0
+                 AND t.outcome_detail LIKE 'stock:%'
+               ORDER BY t.reviewed_at DESC
+               LIMIT ?""",
+            (limit,)
+        )
+        stock_rows = c.fetchall()
+        conn.close()
+
+        all_rows = news_rows + stock_rows
+        all_rows.sort(key=lambda r: str(r[2] or ""), reverse=True)
+
+        result = []
+        seen = set()
+        for row in all_rows:
+            key = (row[0], str(row[1])[:50])
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append({
+                "outcome": row[0],
+                "detail": row[1] or "",
+                "reviewed_at": str(row[2] or "")[:19],
+                "report_date": str(row[3] or "")[:10],
+                "title": row[4] or "",
+                "event_type": row[5] or "",
+                "sentiment": row[6] or "",
+                "review_type": row[7],
+            })
+            if len(result) >= limit:
+                break
+        return result
 
     @staticmethod
     def _is_valid_code(code):

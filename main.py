@@ -36,11 +36,21 @@ def main():
         try:
             from quant_model import QuantScorer
             scorer = QuantScorer()
+            trained = False
             if not scorer.is_trained():
                 print("  [量化模型] 模型不存在，开始训练...", flush=True)
-                scorer.train()
+                trained = scorer.train()
             else:
-                scorer.train_if_expired(interval_days=TRAIN_INTERVAL_DAYS)
+                trained = scorer.train_if_expired(interval_days=TRAIN_INTERVAL_DAYS)
+            # 记录训练日志
+            if trained:
+                metrics = scorer.get_last_train_metrics()
+                if metrics:
+                    try:
+                        storage = ScoutStorage(DATA_DIR)
+                        storage.save_training_log(metrics)
+                    except Exception:
+                        pass
         except Exception as e:
             print(f"  [量化模型] 检查失败: {e}", flush=True)
         print(flush=True)
@@ -203,7 +213,21 @@ def main():
     print(flush=True)
 
     print("【第11步】推送通知...", flush=True)
-    wechat_summary = build_wechat_summary(results, stock_results, capital_data)
+    # 获取复盘统计用于推送
+    review_stats_for_push = None
+    try:
+        ar_data = storage.get_reviews(days=90, limit=200)
+        ar_total = len(ar_data)
+        ar_correct = sum(1 for r in ar_data if r["outcome"] == "正确")
+        if ar_total > 0:
+            review_stats_for_push = {
+                "total": ar_total,
+                "correct": ar_correct,
+                "win_rate": round(ar_correct / ar_total * 100, 1),
+            }
+    except Exception:
+        pass
+    wechat_summary = build_wechat_summary(results, stock_results, capital_data, review_stats=review_stats_for_push)
     wechat_picks = build_wechat_picks(picks, results)
     push_wechat(
         title=f"SCOUT每日情报 {now_str()[:10]}",

@@ -137,6 +137,20 @@ def index():
     except Exception:
         pass
 
+    # 复盘统计
+    review_stats = {"total": 0, "correct": 0, "win_rate": 0}
+    try:
+        reviews_data = storage.get_reviews(days=90, limit=200)
+        total = len(reviews_data)
+        correct = sum(1 for r in reviews_data if r["outcome"] == "正确")
+        review_stats = {
+            "total": total,
+            "correct": correct,
+            "win_rate": round(correct / total * 100, 1) if total > 0 else 0,
+        }
+    except Exception:
+        pass
+
     today = datetime.now().strftime("%Y-%m-%d %H:%M")
     return render_template("index.html",
                            stats=stats,
@@ -144,6 +158,7 @@ def index():
                            last_run=last_run,
                            ml=ml,
                            cl=cl,
+                           review_stats=review_stats,
                            today=today)
 
 
@@ -280,6 +295,36 @@ def api_run_scout():
 @app.route("/api/status")
 def api_scout_status():
     return jsonify(_scout_status)
+
+
+@app.route("/reviews")
+def reviews_view():
+    storage = _get_storage()
+    days = request.args.get("days", "90")
+    try:
+        days = int(days)
+    except ValueError:
+        days = 90
+    reviews = storage.get_reviews(days=days, limit=100)
+
+    # 统计
+    stats = {"正确": 0, "部分正确": 0, "错误": 0}
+    for r in reviews:
+        o = r["outcome"]
+        if o in stats:
+            stats[o] += 1
+    total = sum(stats.values())
+    win_rate = round(stats["正确"] / total * 100, 1) if total > 0 else 0
+
+    training_logs = storage.get_training_logs(limit=10)
+
+    return render_template("reviews.html",
+                           reviews=reviews,
+                           stats=stats,
+                           total=total,
+                           win_rate=win_rate,
+                           days=days,
+                           training_logs=training_logs)
 
 
 @app.route("/api/stats")

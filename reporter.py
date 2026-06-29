@@ -382,7 +382,7 @@ def build_capital_report(capital_data):
     return "\n".join(lines)
 
 
-def build_wechat_summary(results, stock_results=None, capital_data=None):
+def build_wechat_summary(results, stock_results=None, capital_data=None, review_stats=None):
     bullish = sum(1 for r in results if r["analysis"].get("market_sentiment") == "利好")
     bearish = sum(1 for r in results if r["analysis"].get("market_sentiment") == "利空")
     buy = sum(1 for r in results if r["analysis"].get("advice") == "买入")
@@ -485,6 +485,9 @@ def build_wechat_summary(results, stock_results=None, capital_data=None):
         if not actionable:
             lines.append("当前无明确买入信号，建议空仓等待")
             lines.append("")
+
+    if review_stats and review_stats.get("total", 0) > 0:
+        lines.append(f"【自动复盘】近90天: 正确{review_stats['correct']}/{review_stats['total']} 胜率{review_stats['win_rate']}%")
 
     lines.append("---")
     lines.append("由 SCOUT 自动生成，仅供参考，不构成投资建议")

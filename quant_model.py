@@ -184,7 +184,7 @@ def _add_calendar_features(feats, date_str):
     return feats
 
 
-def compute_features_vectorized(kline, stride=3, market_closes=None):
+def compute_features_vectorized(kline, stride=2, market_closes=None):
     """为训练准备: 返回每日特征矩阵和对应未来收益。
     使用 stride 间隔采样减少重叠。
     支持添加日历特征和市场相对收益特征。
@@ -283,6 +283,10 @@ class QuantScorer:
     def is_trained(self):
         return self.model is not None
 
+    def get_last_train_metrics(self):
+        """返回最近一次训练的指标"""
+        return getattr(self, "_last_train_metrics", None)
+
     @staticmethod
     def get_diverse_stocks(count=50):
         """从板块映射表中获取多样化的股票列表"""
@@ -347,7 +351,7 @@ class QuantScorer:
             print("  [量化模型] LightGBM 未安装，跳过训练", flush=True)
             return False
 
-        from config import TRAIN_MIN_STOCKS
+        from config import TRAIN_MIN_STOCKS, TRAIN_KLINE_DAYS
         if max_codes is None:
             max_codes = TRAIN_MIN_STOCKS
 
@@ -358,7 +362,7 @@ class QuantScorer:
         all_targets_reg = []  # 回归目标: 5日收益%
         all_targets_cls = []  # 分类目标: 1(涨)/0(平)/-1(跌)
 
-        print(f"  [量化模型] 开始训练，加载 {len(codes)} 只股票（各250日K线）...", flush=True)
+        print(f"  [量化模型] 开始训练，加载 {len(codes)} 只股票（各{TRAIN_KLINE_DAYS}日K线）...", flush=True)
         from market import get_kline as _get_kline
         success_count = 0
         for idx, code in enumerate(codes[:max_codes]):
@@ -366,7 +370,7 @@ class QuantScorer:
                 import time
                 print(f"  [量化模型] 进度: {idx}/{min(len(codes), max_codes)}，已成功 {success_count} 只", flush=True)
                 time.sleep(2)
-            kline = _get_kline(code, count=250)
+            kline = _get_kline(code, count=TRAIN_KLINE_DAYS)
             if not kline or len(kline) < 60:
                 continue
             rows, targets_reg, targets_cls = compute_features_vectorized(kline)
@@ -464,19 +468,30 @@ class QuantScorer:
             pass
 
         # 分类辅助模型（可选）
-        self._train_classifier(X, y_cls, keys)
+        classifier_acc = self._train_classifier(X, y_cls, keys)
+
+        # 记录训练指标
+        self._last_train_metrics = {
+            "num_stocks": success_count,
+            "num_samples": X.shape[0],
+            "num_features": X.shape[1],
+            "cv_mae": round(avg_mae, 2),
+            "cv_correlation": round(avg_corr, 3),
+            "cv_direction_accuracy": round(avg_acc, 1),
+            "classifier_accuracy": round(classifier_acc, 1) if classifier_acc else None,
+        }
 
         return True
 
     def _train_classifier(self, X, y_cls, keys):
-        """训练方向分类辅助模型"""
+        """训练方向分类辅助模型，返回准确率"""
         try:
             # 过滤掉标签为0的样本（涨跌不明显）
             mask = y_cls != 0
             X_filt = X[mask]
             y_filt = y_cls[mask]
             if len(X_filt) < 50:
-                return
+                return None
 
             from sklearn.model_selection import KFold
             params = {
@@ -509,10 +524,13 @@ class QuantScorer:
                 acc = float(np.mean(pred == y_va)) * 100
                 accs.append(acc)
                 final_clf = clf
-            print(f"  [量化模型] 分类模型(涨/跌) 5折CV准确率: {np.mean(accs):.1f}%", flush=True)
+            acc_mean = float(np.mean(accs))
+            print(f"  [量化模型] 分类模型(涨/跌) 5折CV准确率: {acc_mean:.1f}%", flush=True)
             self.classifier = final_clf
+            return acc_mean
         except Exception as e:
             print(f"  [量化模型] 分类模型训练跳过: {e}", flush=True)
+            return None
 
     def predict(self, kline_data):
         """对单只股票的当前状态评分，返回 0-100 分

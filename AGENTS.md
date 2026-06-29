@@ -13,7 +13,7 @@ SCOUT (Signal Capture, Observation, Understanding & Track) 是一个面向 A 股
 
 ## 核心设计决策
 - 系统名：SCOUT（用户最终选择）
-- AI引擎：硅基流动（SiliconFlow）免费模型，¥0/月
+- AI引擎：DeepSeek V4 Flash（500万免费额度，能力强）
 - 验证策略：标出可信度（高/中/低），由用户自己判断
 - 汇报频率：每天早上一次综合简报
 - 部署方式：本地脚本 + 云端AI API（后续可扩展Web）
@@ -31,7 +31,12 @@ SCOUT (Signal Capture, Observation, Understanding & Track) 是一个面向 A 股
 8. 狙击清单 — 新增strategist.py模块，生成可执行的交易计划（买点/止损/仓位分配）
 9. Web仪表盘 — 新增app.py + templates/，Flask Web可视化看板
 10. 策略回测 — 新增backtest.py模块，支持多持仓周期回测、胜率/收益率/最大回撤统计
-11. 量化评分模型 — 新增quant_model.py模块，LightGBM 61维特征替代固定规则评分
+11. 量化评分模型 — 新增quant_model.py模块，LightGBM 61维特征替代固定规则评分（已扩充至150只股票×800日K线训练）
+12. 同花顺修复 — 已修复SSL EOF错误，4个信息源全部正常（verify=False绕过+fallback URL）
+13. 自动复盘追踪 — storage.py新增auto_review/auto_review_stocks，main.py集成（可开关）
+14. 量化模型自动重训练 — 新增train_if_expired机制+config配置，每次运行自动检查
+15. 多信号确信度 — 综合技术面/资金面/新闻面计算确信度评分
+16. 推荐追踪系统 — 狙击清单记录+自动评估+月度业绩报告
 
 ## 技术栈
 - Python 3.14+
@@ -83,7 +88,10 @@ python -X utf8 review.py
 - MAX_SCREENED_STOCKS：5（每日最多分析个股数）
 - USE_ML_SCORING：True（启用LightGBM量化评分）
 - PUSH_WECHAT：微信推送开关（默认False）
-- SERVER_CHAN_KEY：ServerChan密钥（需用户自行获取）
+- SERVER_CHAN_KEY：ServerChan密钥（需用户自行配置）
+- TRAIN_MIN_STOCKS：150（量化模型训练股票数）
+- TRAIN_KLINE_DAYS：800（每只股票K线天数）
+- TRAIN_INTERVAL_DAYS：7（模型自动重训练间隔）
 
 ## 当前信息源（4个）
 1. 东方财富要闻 — 解析器: eastmoney
@@ -99,10 +107,10 @@ python -X utf8 review.py
 - 使用公开信息，不涉及内幕交易
 
 ## 当前局限
-- 同花顺解析器 SSL EOF 错误，暂无可采集数据
-- GitHub push 网络不通，commit 仅本地保存
-- 量化模型仅 3 只股票 × 180 天训练数据，泛化不足
-- 回测因历史买入信号不足，暂无可交易记录
+- GitHub push 网络不通，commit 仅本地保存（需切换网络或配置代理）
+- 回测因历史买入信号不足，暂无可交易记录（需运行一段时间积累数据）
+- 量化模型日历特征（day_of_month/month）重要性偏高，可能存在过拟合风险
+- 4个信息源均为中文，无英文全球市场覆盖
 
 ## 存档指令
 - 用户要求每次对话结束前（或修改重要代码后）执行 git add -A && git commit -m "描述" && git push origin main
@@ -112,12 +120,14 @@ python -X utf8 review.py
 ## 后续可改进方向
 | 方向 | 优先级 | 说明 |
 |------|--------|------|
-| 扩充量化训练数据 | 高 | 从3只→30+股票，更长历史周期 |
-| 量化模型自动重训练 | 中 | 每周/月自动增量训练 |
-| 切换更强AI模型 | 中 | DeepSeek / GPT-4o-mini（¥1-2/月） |
-| 自动复盘追踪 | 中 | 系统自动跟踪预判后续走势 |
+| 扩充量化训练数据 | ✅已完成 | 已从3只×180天→150只×800日K线，MAE从4.52%降至3.50% |
+| 量化模型自动重训练 | ✅已完成 | train_if_expired机制，运行自动检查，7天间隔可配置 |
+| 切换更强AI模型 | ✅已完成 | 已切换至DeepSeek V4 Flash |
+| 自动复盘追踪 | ✅已完成 | 新闻+个股双复盘，已整合进main.py |
+| 修复同花顺解析器 | ✅已完成 | verify=False绕过+fallback URL，4个信息源全部正常 |
+| 量化模型日历特征优化 | 中 | day_of_month/month特征重要性偏高，需添加更多非日历特征 |
 | 接入英文信息源 | 低 | Reuters / Bloomberg |
-| 修复同花顺解析器 | 中 | SSL 握手问题或换备用源 |
 | Web看板远程部署 | 低 | 云服务器或 NAS |
 | SSH/代理解决Git推送 | 低 | 更换网络环境 |
+| 推荐追踪详细报告 | 低 | 月度业绩报告自动推送微信 |
 

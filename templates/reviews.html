@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}自动复盘{% endblock %}
+{% block content %}
+<div class="header">
+    <h1>自动复盘</h1>
+    <div class="sub">系统自动追踪预判后续走势，按实际市场表现评估准确性</div>
+</div>
+
+<div class="cards cards-4">
+    <div class="card">
+        <div class="label">总复盘数</div>
+        <div class="value">{{ total }}</div>
+        <div class="sub">近 {{ days }} 天</div>
+    </div>
+    <div class="card">
+        <div class="label">正确</div>
+        <div class="value green">{{ stats["正确"] }}</div>
+        <div class="sub">预判准确数</div>
+    </div>
+    <div class="card">
+        <div class="label">胜率</div>
+        <div class="value {% if win_rate >= 60 %}green{% elif win_rate >= 40 %}yellow{% else %}red{% endif %}">{{ win_rate }}%</div>
+        <div class="sub">正确 / 总复盘</div>
+    </div>
+    <div class="card">
+        <div class="label">部分正确</div>
+        <div class="value yellow">{{ stats["部分正确"] }}</div>
+        <div class="sub">方向对但幅度不足</div>
+    </div>
+</div>
+
+<div class="filter-bar">
+    <span style="font-size:13px;color:#8b949e;">复盘天数：</span>
+    <a href="/reviews?days=7" class="btn {% if days==7 %}btn-primary{% endif %}">7天</a>
+    <a href="/reviews?days=30" class="btn {% if days==30 %}btn-primary{% endif %}">30天</a>
+    <a href="/reviews?days=90" class="btn {% if days==90 %}btn-primary{% endif %}">90天</a>
+</div>
+
+{% if reviews %}
+<table>
+    <thead>
+        <tr>
+            <th>日期</th>
+            <th>类型</th>
+            <th>内容</th>
+            <th>情绪</th>
+            <th>结果</th>
+            <th>详情</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in reviews %}
+        <tr>
+            <td style="white-space:nowrap;">{{ r.report_date[:10] if r.report_date else '-' }}</td>
+            <td>
+                {% if r.review_type == 'stock' %}
+                <span class="tag tag-buy">个股</span>
+                {% else %}
+                <span class="tag tag-neu">新闻</span>
+                {% endif %}
+            </td>
+            <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                {% if r.review_type == 'stock' %}
+                    {{ r.detail[:80] }}
+                {% else %}
+                    {{ r.title[:80] }}
+                {% endif %}
+            </td>
+            <td>
+                {% if r.sentiment == "利好" %}
+                <span class="tag tag-bull">利好</span>
+                {% elif r.sentiment == "利空" %}
+                <span class="tag tag-bear">利空</span>
+                {% else %}
+                <span class="tag tag-neu">{{ r.sentiment or '-' }}</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if r.outcome == "正确" %}
+                <span class="tag tag-bull">{{ r.outcome }}</span>
+                {% elif r.outcome == "部分正确" %}
+                <span class="tag tag-wait">{{ r.outcome }}</span>
+                {% else %}
+                <span class="tag tag-bear">{{ r.outcome }}</span>
+                {% endif %}
+            </td>
+            <td style="max-width:350px;font-size:12px;color:#8b949e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ r.detail }}">
+                {{ r.detail[:80] }}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="empty">
+    <div class="icon">📊</div>
+    <p>暂无可复盘记录</p>
+    <p style="font-size:13px;margin-top:8px;">运行 SCOUT 主程序后，系统会自动追踪预判的后续走势</p>
+</div>
+{% endif %}
+
+{% if training_logs %}
+<div class="header" style="margin-top:40px;">
+    <h2>🤖 量化模型训练历史</h2>
+    <div class="sub">LightGBM 每次训练的指标记录</div>
+</div>
+<table>
+    <thead>
+        <tr>
+            <th>训练日期</th>
+            <th>股票数</th>
+            <th>样本数</th>
+            <th>特征数</th>
+            <th>MAE</th>
+            <th>相关系数</th>
+            <th>方向准确率</th>
+            <th>分类准确率</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for log in training_logs %}
+        <tr>
+            <td>{{ log.date }}</td>
+            <td>{{ log.num_stocks }}</td>
+            <td>{{ log.num_samples }}</td>
+            <td>{{ log.num_features }}</td>
+            <td>{{ log.cv_mae }}%</td>
+            <td>{{ log.cv_correlation }}</td>
+            <td>{{ log.cv_direction_accuracy }}%</td>
+            <td>{{ log.classifier_accuracy }}%</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+{% endblock %}

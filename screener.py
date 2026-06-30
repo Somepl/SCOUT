@@ -206,7 +206,7 @@ def _extract_stock_codes_from_analysis(news_results):
     return candidates
 
 
-def ai_suggest_stocks(client, news_results, max_stocks=15):
+def ai_suggest_stocks(client, news_results, max_stocks=15, retries=2):
     if not client:
         return []
 
@@ -227,42 +227,50 @@ def ai_suggest_stocks(client, news_results, max_stocks=15):
         max_stocks=max_stocks,
     )
 
-    try:
-        resp = client.chat.completions.create(
-            model=AI_MODEL,
-            messages=[
-                {"role": "system", "content": "你是一个A股分析助手。"},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.3,
-            max_tokens=800,
-        )
-        text = resp.choices[0].message.content.strip()
-        if text.startswith("```"):
-            start = text.find("{")
-            end = text.rfind("}")
-            if start != -1 and end != -1:
-                text = text[start:end + 1]
-        import json
+    for attempt in range(retries):
         try:
-            data = json.loads(text)
-            stocks = data.get("stocks", [])
-            result = []
-            for s in stocks:
-                code = str(s.get("code", "")).strip()
-                if code and (code.startswith("6") or code.startswith("0") or code.startswith("3")):
-                    if code not in [r["code"] for r in result]:
-                        result.append({
-                            "code": code,
-                            "source_sectors": ["AI推荐"],
-                            "priority": 0,
-                        })
-            return result[:max_stocks]
-        except (json.JSONDecodeError, TypeError):
+            resp = client.chat.completions.create(
+                model=AI_MODEL,
+                messages=[
+                    {"role": "system", "content": "你是一个A股分析助手。"},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.3,
+                max_tokens=800,
+                timeout=30,
+            )
+            text = resp.choices[0].message.content.strip()
+            if text.startswith("```"):
+                start = text.find("{")
+                end = text.rfind("}")
+                if start != -1 and end != -1:
+                    text = text[start:end + 1]
+            import json
+            try:
+                data = json.loads(text)
+                stocks = data.get("stocks", [])
+                result = []
+                for s in stocks:
+                    code = str(s.get("code", "")).strip()
+                    if code and (code.startswith("6") or code.startswith("0") or code.startswith("3")):
+                        if code not in [r["code"] for r in result]:
+                            result.append({
+                                "code": code,
+                                "source_sectors": ["AI推荐"],
+                                "priority": 0,
+                            })
+                return result[:max_stocks]
+            except (json.JSONDecodeError, TypeError):
+                if attempt < retries - 1:
+                    time.sleep(2)
+                    continue
+                return []
+        except Exception as e:
+            print(f"  [AI荐股失败] 第{attempt+1}次: {e}", flush=True)
+            if attempt < retries - 1:
+                time.sleep(3)
+                continue
             return []
-    except Exception as e:
-        print(f"  [AI荐股失败] {e}", flush=True)
-        return []
 
 
 def discover_stocks(news_results, max_stocks=15):

@@ -513,6 +513,36 @@ class ScoutStorage:
                 })
         return signals
 
+    def get_stock_analysis_buy_signals(self, days=90):
+        """从 stock_analysis 表获取技术面买入信号"""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute(
+            """SELECT code, name, price, score, signal, action, report_date
+               FROM stock_analysis
+               WHERE report_date >= date('now', ?)
+                 AND (signal IN ('强烈买入', '买入') OR action IN ('买入', '加仓', '增持'))
+                 AND score >= 60
+               ORDER BY report_date DESC, score DESC""",
+            (f"-{days} days",)
+        )
+        rows = c.fetchall()
+        conn.close()
+        signals = []
+        for row in rows:
+            code, name, price, score, signal, action, report_date = row
+            signals.append({
+                "code": code,
+                "name": name,
+                "price": price,
+                "score": score,
+                "signal": signal,
+                "action": action,
+                "date": report_date,
+                "source": "stock_analysis",
+            })
+        return signals
+
     def get_stock_history(self, days=30):
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()

@@ -25,15 +25,40 @@ def _fetch_json(url, params=None):
         return None
 
 
+def _extract_klines(data_result):
+    """从API返回中提取合并的北向资金数据行，兼容新旧两种格式。
+    
+    旧格式: data_result["klines"] — 每行 "date,sh_val,sz_val,sh_val2,sz_val2"
+    新格式: data_result["hk2sh"] + data_result["hk2sz"] — 各市场独立数组
+    """
+    if not data_result:
+        return []
+    if "klines" in data_result:
+        return data_result.get("klines", [])
+    # 新格式：将 hk2sh 和 hk2sz 按日期合并为旧格式行
+    hk2sh = data_result.get("hk2sh", [])
+    hk2sz = data_result.get("hk2sz", [])
+    merged = []
+    max_len = max(len(hk2sh), len(hk2sz))
+    for i in range(max_len):
+        sh_parts = hk2sh[i].split(",") if i < len(hk2sh) else []
+        sz_parts = hk2sz[i].split(",") if i < len(hk2sz) else []
+        date = sh_parts[0] if len(sh_parts) > 0 else (sz_parts[0] if len(sz_parts) > 0 else "")
+        sh_val = sh_parts[1] if len(sh_parts) > 1 else "0"
+        sz_val = sz_parts[1] if len(sz_parts) > 1 else "0"
+        merged.append(f"{date},{sh_val},{sz_val},0,0")
+    return merged
+
+
 def _is_non_trading_day(data_result):
     """检查API返回的数据是否全零（非交易日特征）"""
-    klines = data_result.get("klines", []) if data_result else []
+    klines = _extract_klines(data_result)
     if not klines:
         return False
     all_zero = True
     for line in klines[:3]:
         parts = line.split(",")
-        if len(parts) >= 5:
+        if len(parts) >= 3:
             if parts[1] or parts[2]:
                 all_zero = False
                 break
@@ -60,7 +85,7 @@ def get_northbound_flow(days=10):
     if not data or data.get("data") is None:
         return _northbound_fallback(days)
 
-    klines = data["data"].get("klines", [])
+    klines = _extract_klines(data["data"])
     if not klines:
         return _northbound_fallback(days)
 
@@ -70,7 +95,7 @@ def get_northbound_flow(days=10):
     result = []
     for line in klines:
         parts = line.split(",")
-        if len(parts) < 5:
+        if len(parts) < 3:
             continue
         date = parts[0]
         sh_net = float(parts[1]) if parts[1] else 0
@@ -93,10 +118,10 @@ def get_northbound_flow(days=10):
             more_data = _fetch_json(url, {**params, "lmt": str(days + extra)})
             if not more_data or more_data.get("data") is None:
                 continue
-            more_klines = more_data["data"].get("klines", [])
+            more_klines = _extract_klines(more_data["data"])
             for line in more_klines:
                 parts = line.split(",")
-                if len(parts) >= 5 and parts[1]:
+                if len(parts) >= 3 and parts[1]:
                     found_date = parts[0]
                     found_sh = float(parts[1]) if parts[1] else 0
                     found_sz = float(parts[2]) if parts[2] else 0
@@ -130,42 +155,47 @@ def _northbound_fallback(days=10):
 
 def get_margin_balance():
     url = "https://datacenter.eastmoney.com/api/data/v1/get"
-    params = {
-        "reportName": "RPTA_WEB_RZRQ_JJZ",
-        "columns": "TRADE_DATE,SZ_RZRQYE,SH_RZRQYE,RZRQYE",
-        "pageNumber": 1,
-        "pageSize": 3,
-        "sortTypes": "-1",
-        "sortColumns": "TRADE_DATE",
-        "source": "WEB",
-        "client": "WEB",
-    }
-    data = _fetch_json(url, params)
-    if not data or data.get("result") is None:
-        return _margin_fallback()
 
-    items = data.get("result", {}).get("data", [])
-    if not items:
-        return _margin_fallback()
+    # 尝试多种参数组合（API 格式可能变化）
+    param_sets = [
+        {
+            "reportName": "RPTA_WEB_RZRQ_JJZ",
+            "columns": "TRADE_DATE,SZ_RZRQYE,SH_RZRQYE,RZRQYE",
+            "pageNumber": 1, "pageSize": 3,
+            "sortTypes": "-1", "sortColumns": "TRADE_DATE",
+        },
+        {
+            "reportName": "RPTA_WEB_RZRQ_JJZ",
+            "columns": "ALL",
+            "pageNumber": 1, "pageSize": 3,
+            "sortTypes": "-1", "sortColumns": "TRADE_DATE",
+        },
+    ]
 
-    result = []
-    for item in items:
-        date = item.get("TRADE_DATE", "")
-        total = float(item.get("RZRQYE", 0) or 0)
-        sz = float(item.get("SZ_RZRQYE", 0) or 0)
-        sh = float(item.get("SH_RZRQYE", 0) or 0)
-        result.append({
-            "date": date[:10] if len(date) > 10 else date,
-            "total": total,
-            "sh": sh,
-            "sz": sz,
-            "total_yi": round(total / 1e8, 2),
-            "sh_yi": round(sh / 1e8, 2),
-            "sz_yi": round(sz / 1e8, 2),
-            "note": "ok" if total else "off_day",
-        })
+    for params in param_sets:
+        data = _fetch_json(url, params)
+        if data and data.get("result") is not None:
+            items = data.get("result", {}).get("data", [])
+            if items:
+                result = []
+                for item in items:
+                    date = item.get("TRADE_DATE", "")
+                    total = float(item.get("RZRQYE", 0) or 0)
+                    sz = float(item.get("SZ_RZRQYE", 0) or 0)
+                    sh = float(item.get("SH_RZRQYE", 0) or 0)
+                    result.append({
+                        "date": date[:10] if len(date) > 10 else date,
+                        "total": total,
+                        "sh": sh,
+                        "sz": sz,
+                        "total_yi": round(total / 1e8, 2),
+                        "sh_yi": round(sh / 1e8, 2),
+                        "sz_yi": round(sz / 1e8, 2),
+                        "note": "ok" if total else "off_day",
+                    })
+                return result
 
-    return result
+    return _margin_fallback()
 
 
 def _margin_fallback():
@@ -187,18 +217,21 @@ def get_northbound_top10():
     if not data:
         return []
 
-    klines = data.get("data", {}).get("klines", [])
+    klines = _extract_klines(data.get("data", {}))
     if not klines:
         return []
 
     parts = klines[0].split(",")
-    if len(parts) < 6:
+    if len(parts) < 3:
         return []
 
+    sh_val = float(parts[1]) if parts[1] else 0
+    sz_val = float(parts[2]) if parts[2] else 0
+
     return [
-        {"date": parts[0], "沪股通(亿)": round(float(parts[1]) / 1e8, 2) if parts[1] else 0,
-         "深股通(亿)": round(float(parts[2]) / 1e8, 2) if parts[2] else 0,
-         "合计(亿)": round((float(parts[1]) + float(parts[2])) / 1e8, 2) if parts[1] and parts[2] else 0}
+        {"date": parts[0], "沪股通(亿)": round(sh_val / 1e8, 2),
+         "深股通(亿)": round(sz_val / 1e8, 2),
+         "合计(亿)": round((sh_val + sz_val) / 1e8, 2)}
     ]
 
 

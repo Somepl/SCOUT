@@ -154,6 +154,65 @@ def compute_features(kline):
     feats["lower_shadow"] = (min(closes[-1], opens[-1]) - lows[-1]) / (closes[-1] + SAFE_DIV) * 100
     feats["body_pct"] = abs(closes[-1] - opens[-1]) / (opens[-1] + SAFE_DIV) * 100
 
+    # ── 动量加速度特征（价格二阶导数） ──
+    for d in [5, 10]:
+        if n > d + 5:
+            mom1 = (closes[-1] - closes[-1 - d]) / (closes[-1 - d] + SAFE_DIV) * 100   # 当前 d 日动量
+            mom0 = (closes[-1 - d] - closes[-1 - 2 * d]) / (closes[-1 - 2 * d] + SAFE_DIV) * 100  # 上一段动量
+            feats[f"accel_{d}d"] = mom1 - mom0  # 加速度：动量变化
+        else:
+            feats[f"accel_{d}d"] = 0
+
+    # ── 收益分布特征（偏度/峰度） ──
+    for d in [10, 20]:
+        if n > d:
+            rets = np.diff(closes[-d:]) / closes[-d:-1] * 100
+            feats[f"ret_skew_{d}d"] = float(pd.Series(rets).skew()) if len(rets) > 2 else 0
+            feats[f"ret_kurt_{d}d"] = float(pd.Series(rets).kurtosis()) if len(rets) > 2 else 0
+        else:
+            feats[f"ret_skew_{d}d"] = 0
+            feats[f"ret_kurt_{d}d"] = 0
+
+    # ── 量价相关性特征 ──
+    for d in [5, 10]:
+        if n > d:
+            price_chg = np.diff(closes[-d:]) / closes[-d:-1] * 100
+            vol_chg = np.diff(volumes[-d:]) / (volumes[-d:-1] + SAFE_DIV) * 100
+            if len(price_chg) > 2 and np.std(price_chg) > 0 and np.std(vol_chg) > 0:
+                corr = np.corrcoef(price_chg, vol_chg)[0, 1]
+            else:
+                corr = 0
+            feats[f"price_vol_corr_{d}d"] = corr if not np.isnan(corr) else 0
+        else:
+            feats[f"price_vol_corr_{d}d"] = 0
+
+    # ── ATR（平均真实波幅）归一化 ──
+    for d in [10, 14]:
+        if n > d:
+            true_ranges = []
+            for i in range(-d, 0):
+                tr = max(highs[i], closes[i - 1]) - min(lows[i], closes[i - 1])
+                true_ranges.append(tr)
+            atr = np.mean(true_ranges)
+            feats[f"atr_{d}d"] = atr / (closes[-1] + SAFE_DIV) * 100
+        else:
+            feats[f"atr_{d}d"] = 0
+
+    # ── 连续涨跌天数 ──
+    up_days = 0
+    down_days = 0
+    for i in range(min(n - 1, 10)):
+        if closes[-1 - i] > closes[-2 - i]:
+            up_days += 1
+            down_days = 0
+        elif closes[-1 - i] < closes[-2 - i]:
+            down_days += 1
+            up_days = 0
+        else:
+            break
+    feats["consecutive_up"] = up_days
+    feats["consecutive_down"] = down_days
+
     return feats
 
 

@@ -473,7 +473,7 @@ def _get_quant_score(kline, code, rule_score):
 
 
 def get_stock_analysis(code):
-    kline = get_kline(code, count=60)
+    kline = get_kline(code, count=200)
     quote = get_realtime_quote(code)
     if not kline or not quote:
         return None

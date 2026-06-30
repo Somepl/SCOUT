@@ -79,17 +79,45 @@ def simulate_trade(code, entry_date_str, holding_days=10, stop_loss=-0.05):
     }
 
 
+def _merge_signal_sources(analysis_signals, stock_signals):
+    """合并分析信号和个股技术信号，按日期+代码去重，统一字段名"""
+    seen = set()
+    merged = []
+    for s in analysis_signals:
+        key = (s["date"][:10], s["code"])
+        if key not in seen:
+            seen.add(key)
+            merged.append(s)
+    for s in stock_signals:
+        key = (s["date"][:10], s["code"])
+        if key not in seen:
+            seen.add(key)
+            # 补齐 stock_signals 缺少的字段（兼容 backtest 消费）
+            s["advice"] = s.get("action", "买入")
+            s["confidence"] = "中"
+            s["title"] = f"{s.get('name', '')}({s['code']}) 技术买入信号"
+            merged.append(s)
+    return merged
+
+
 def run_backtest(days=90, holding_periods=None, stop_loss=-0.05):
     """主回测入口——各持仓周期独立模拟"""
     if holding_periods is None:
         holding_periods = [5, 10, 20, 30]
 
     storage = ScoutStorage(DATA_DIR)
-    signals = storage.get_buy_signals(days=days)
 
-    buy_signals = [s for s in signals if s["advice"] in ("买入", "关注")]
+    # 从两个数据源获取买入信号
+    analysis_signals = storage.get_buy_signals(days=days)
+    stock_signals = storage.get_stock_analysis_buy_signals(days=days)
+
+    # 筛选：analysis 表取 advice="买入"或"关注"；stock_analysis 已筛选
+    buy_signals_analysis = [s for s in analysis_signals if s["advice"] in ("买入", "关注")]
+    buy_signals = _merge_signal_sources(buy_signals_analysis, stock_signals)
+
     if not buy_signals:
-        return {"总信号数": len(signals), "买入信号": 0, "成交": 0, "结果": {}, "总结": "无买入信号可回测"}
+        return {"总信号数": len(analysis_signals), "个股技术信号": len(stock_signals),
+                "买入信号": 0, "成交": 0, "结果": {}, "总结": "无买入信号可回测"}
 
     period_results = {}
     all_trades_by_period = {}
@@ -151,7 +179,8 @@ def run_backtest(days=90, holding_periods=None, stop_loss=-0.05):
     display_trades = all_trades_by_period.get(longest_key, [])
 
     return {
-        "总信号数": len(signals),
+        "总信号数": len(analysis_signals),
+        "个股技术信号": len(stock_signals),
         "买入信号": len(buy_signals),
         "成交": len(display_trades),
         "结果": period_results,

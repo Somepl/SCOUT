@@ -109,10 +109,11 @@ DASHBOARD_PROMPT = """你是一名A股资深交易员。请基于以下个股的
 
 输出要求：
 1. 只输出JSON，不要额外的文字
-2. 数据偏向谨慎，宁可低分不可追高
-3. battle_plan中的entry必须明确价格区间
-4. stop_loss必须给出具体价格
-5. position必须给出具体仓位百分比"""
+2. 结合数据评分和信号做出判断：评分≥75且多头趋势→强烈买入，评分60-74且趋势偏多→买入，评分45-59→持有，评分30-44→观望，评分<30→卖出
+3. 当技术面数据支持时（趋势多头、MACD金叉、RSI中性偏强、量价配合），应给出"买入"或"强烈买入"信号，不要因保守而错过机会
+4. battle_plan中的entry必须明确价格区间
+5. stop_loss必须给出具体价格
+6. position必须给出具体仓位百分比"""
 
 
 def get_client():
@@ -353,11 +354,20 @@ def _parse_dashboard_json(text):
         return None
 
 
+def _normalize_action(action):
+    """统一action变体：将'增持'等映射为标准值"""
+    if not action:
+        return "观望"
+    if action in ("增持",):
+        return "加仓"
+    return action
+
+
 def _stabilize_decision(dashboard):
     if not dashboard or "core_conclusion" not in dashboard:
         return dashboard
     cc = dashboard["core_conclusion"]
-    action = dashboard.get("battle_plan", {}).get("action", "观望")
+    action = _normalize_action(dashboard.get("battle_plan", {}).get("action", "观望"))
 
     rule_score = 50
     if cc.get("signal") in ("强烈买入", "买入"):
